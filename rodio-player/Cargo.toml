@@ -1,0 +1,15 @@
+[package]
+name = "rodio-player"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+icy-metadata = "0.4"
+rodio = { version = "0.21", default-features = false, features = [
+    "symphonia-all",
+    "playback",
+] }
+stream-download = { version = "0.22", features = ["reqwest-rustls"] }
+tracing = "0.1"
