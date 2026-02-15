@@ -312,12 +312,7 @@ pub(crate) enum UiAction {
         album_id: i32,
         album_name: String,
     },
-    BrowseBack {
-        source_idx: usize,
-    },
-    PlayAllAtLevel {
-        source_idx: usize,
-    },
+
     ScanSource {
         source_idx: usize,
     },
@@ -438,6 +433,7 @@ impl Homeplayer {
                     match store.get_albums_by_artist(source_id, artist_id) {
                         Ok(albums) => {
                             state.albums = albums;
+                            state.browse_mode = BrowseMode::ByAlbum;
                             state.browse_level = BrowseLevel::Albums {
                                 artist_id,
                                 artist_name,
@@ -461,6 +457,7 @@ impl Homeplayer {
                     match store.get_titles_by_artist_and_album(source_id, artist_id, album_id) {
                         Ok(titles) => {
                             state.titles = titles;
+                            state.browse_mode = BrowseMode::ByTitle;
                             state.browse_level = BrowseLevel::Titles {
                                 artist_id,
                                 artist_name,
@@ -484,6 +481,7 @@ impl Homeplayer {
                     match store.get_titles_by_album(source_id, album_id) {
                         Ok(titles) => {
                             state.titles = titles;
+                            state.browse_mode = BrowseMode::ByTitle;
                             state.browse_level = BrowseLevel::TitlesForAlbum {
                                 album_id,
                                 album_name,
@@ -493,65 +491,7 @@ impl Homeplayer {
                     }
                 }
             }
-            UiAction::BrowseBack { source_idx } => {
-                if let Some(state) = self.file_source_states.get_mut(&source_idx) {
-                    match &state.browse_level {
-                        BrowseLevel::Artists | BrowseLevel::AllAlbums | BrowseLevel::AllTitles => {} // already at top
-                        BrowseLevel::Albums { .. } => {
-                            state.browse_level = BrowseLevel::Artists;
-                            state.albums.clear();
-                        }
-                        BrowseLevel::Titles {
-                            artist_id,
-                            artist_name,
-                            ..
-                        } => {
-                            let aid = *artist_id;
-                            let aname = artist_name.clone();
-                            state.browse_level = BrowseLevel::Albums {
-                                artist_id: aid,
-                                artist_name: aname,
-                            };
-                            state.titles.clear();
-                        }
-                        BrowseLevel::TitlesForAlbum { .. } => {
-                            state.browse_level = BrowseLevel::AllAlbums;
-                            state.titles.clear();
-                        }
-                    }
-                }
-            }
-            UiAction::PlayAllAtLevel { source_idx } => {
-                if let Some(state) = self.file_source_states.get(&source_idx)
-                    && let Some(source_id) = state.source_id
-                    && let Some(ref store) = self.music_store
-                {
-                    let titles = match &state.browse_level {
-                        BrowseLevel::Artists | BrowseLevel::AllAlbums | BrowseLevel::AllTitles => {
-                            store.get_titles(source_id).ok()
-                        }
-                        BrowseLevel::Albums { artist_id, .. } => {
-                            store.get_titles_by_artist(source_id, *artist_id).ok()
-                        }
-                        BrowseLevel::Titles {
-                            artist_id,
-                            album_id,
-                            ..
-                        } => store
-                            .get_titles_by_artist_and_album(source_id, *artist_id, *album_id)
-                            .ok(),
-                        BrowseLevel::TitlesForAlbum { album_id, .. } => {
-                            store.get_titles_by_album(source_id, *album_id).ok()
-                        }
-                    };
-                    if let Some(titles) = titles {
-                        self.process_action(UiAction::PlayTitles {
-                            titles,
-                            start_index: 0,
-                        });
-                    }
-                }
-            }
+
             UiAction::ScanSource { source_idx } => {
                 let source = &self.config.sources[source_idx];
                 if let Some(ref store) = self.music_store {
@@ -606,6 +546,44 @@ impl Homeplayer {
             UiAction::PlayerPlay => {
                 if self.is_paused {
                     self.player.pause(); // toggles pause→play
+                } else if !self.is_playing {
+                    // Nothing playing – start playback of all titles at the
+                    // current browse level of the visible file source page.
+                    let current_page = self.swipe_view.current_page();
+                    if let Some(DynamicPage::Source(source_idx)) = self.pages.get(current_page) {
+                        let source_idx = *source_idx;
+                        if let Some(state) = self.file_source_states.get(&source_idx)
+                            && let Some(source_id) = state.source_id
+                            && let Some(ref store) = self.music_store
+                        {
+                            let titles = match &state.browse_level {
+                                BrowseLevel::Artists
+                                | BrowseLevel::AllAlbums
+                                | BrowseLevel::AllTitles => store.get_titles(source_id).ok(),
+                                BrowseLevel::Albums { artist_id, .. } => {
+                                    store.get_titles_by_artist(source_id, *artist_id).ok()
+                                }
+                                BrowseLevel::Titles {
+                                    artist_id,
+                                    album_id,
+                                    ..
+                                } => store
+                                    .get_titles_by_artist_and_album(
+                                        source_id, *artist_id, *album_id,
+                                    )
+                                    .ok(),
+                                BrowseLevel::TitlesForAlbum { album_id, .. } => {
+                                    store.get_titles_by_album(source_id, *album_id).ok()
+                                }
+                            };
+                            if let Some(titles) = titles {
+                                self.process_action(UiAction::PlayTitles {
+                                    titles,
+                                    start_index: 0,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             UiAction::PlayerPause => {
@@ -854,7 +832,6 @@ impl eframe::App for Homeplayer {
                     *k,
                     FileRenderData {
                         source_id: v.source_id,
-                        browse_mode: v.browse_mode.clone(),
                         browse_level: v.browse_level.clone(),
                         artists: v.artists.clone(),
                         albums: v.albums.clone(),

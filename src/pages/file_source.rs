@@ -14,11 +14,32 @@ use crate::pages::semi_transparent_fill;
 #[derive(Clone)]
 pub struct FileRenderData {
     pub source_id: Option<i32>,
-    pub browse_mode: BrowseMode,
     pub browse_level: BrowseLevel,
     pub artists: Vec<MusicItem>,
     pub albums: Vec<MusicItem>,
     pub titles: Vec<MusicTitleItem>,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers to determine what is currently displayed
+// ---------------------------------------------------------------------------
+
+/// Which conceptual level the user is currently looking at, derived from `BrowseLevel`.
+#[derive(PartialEq)]
+enum DisplayedLevel {
+    Artists,
+    Albums,
+    Titles,
+}
+
+fn displayed_level(bl: &BrowseLevel) -> DisplayedLevel {
+    match bl {
+        BrowseLevel::Artists => DisplayedLevel::Artists,
+        BrowseLevel::Albums { .. } | BrowseLevel::AllAlbums => DisplayedLevel::Albums,
+        BrowseLevel::Titles { .. }
+        | BrowseLevel::TitlesForAlbum { .. }
+        | BrowseLevel::AllTitles => DisplayedLevel::Titles,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,61 +56,12 @@ pub fn paint_file_source(
 ) {
     ui.add_space(8.0);
 
-    // Header with back button and breadcrumb
-    ui.horizontal(|ui| match &data.browse_level {
-        BrowseLevel::Artists | BrowseLevel::AllAlbums | BrowseLevel::AllTitles => {
-            ui.heading(format!("📁 {}", source.name));
-        }
-        BrowseLevel::Albums { artist_name, .. } => {
-            if ui
-                .button(egui::RichText::new("⬅").size(20.0))
-                .on_hover_text("Back to artists")
-                .clicked()
-            {
-                actions.push(UiAction::BrowseBack { source_idx });
-            }
-            ui.heading(format!("🎤 {}", artist_name));
-        }
-        BrowseLevel::Titles {
-            artist_name,
-            album_name,
-            ..
-        } => {
-            if ui
-                .button(egui::RichText::new("⬅").size(20.0))
-                .on_hover_text("Back to albums")
-                .clicked()
-            {
-                actions.push(UiAction::BrowseBack { source_idx });
-            }
-            ui.heading(format!("💿 {} — {}", artist_name, album_name));
-        }
-        BrowseLevel::TitlesForAlbum { album_name, .. } => {
-            if ui
-                .button(egui::RichText::new("⬅").size(20.0))
-                .on_hover_text("Back to albums")
-                .clicked()
-            {
-                actions.push(UiAction::BrowseBack { source_idx });
-            }
-            ui.heading(format!("💿 {}", album_name));
-        }
-    });
-
+    // Header – always show the source name
+    ui.heading(format!("📁 {}", source.name));
     ui.separator();
 
     // Action bar
     ui.horizontal(|ui| {
-        if data.source_id.is_some() {
-            if ui
-                .button("▶ Play All")
-                .on_hover_text("Play all tracks at this level")
-                .clicked()
-            {
-                actions.push(UiAction::PlayAllAtLevel { source_idx });
-            }
-        }
-
         if is_scanning {
             ui.spinner();
             ui.label(egui::RichText::new("Scanning...").weak().italics());
@@ -104,20 +76,23 @@ pub fn paint_file_source(
 
     ui.add_space(4.0);
 
-    // Browse mode toggle buttons (only show at root levels or always for convenience)
+    // Browse mode toggle buttons – always visible, highlighted by what is
+    // currently *displayed* (not by the stored browse_mode).
     if data.source_id.is_some() {
+        let current_display = displayed_level(&data.browse_level);
+
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("View:").weak().small());
             ui.add_space(4.0);
 
-            let modes = [
-                (BrowseMode::ByArtist, "🎤 Artist"),
-                (BrowseMode::ByAlbum, "💿 Album"),
-                (BrowseMode::ByTitle, "🎵 Title"),
+            let buttons: [(BrowseMode, &str, DisplayedLevel); 3] = [
+                (BrowseMode::ByArtist, "🎤 Artist", DisplayedLevel::Artists),
+                (BrowseMode::ByAlbum, "💿 Album", DisplayedLevel::Albums),
+                (BrowseMode::ByTitle, "🎵 Title", DisplayedLevel::Titles),
             ];
 
-            for (mode, label) in &modes {
-                let is_selected = data.browse_mode == *mode;
+            for (mode, label, level) in &buttons {
+                let is_selected = *level == current_display;
                 let text = egui::RichText::new(*label).size(13.0);
                 let text = if is_selected { text.strong() } else { text };
 
@@ -128,6 +103,8 @@ pub fn paint_file_source(
                 });
 
                 if ui.add(button).clicked() && !is_selected {
+                    // Clicking a view button always resets to the unfiltered
+                    // top-level for that mode.
                     actions.push(UiAction::SwitchBrowseMode {
                         source_idx,
                         mode: mode.clone(),
@@ -137,6 +114,9 @@ pub fn paint_file_source(
         });
 
         ui.add_space(4.0);
+
+        // Breadcrumb: show which artist / album filter is active
+        paint_breadcrumb(ui, source_idx, data, actions);
     }
 
     if data.source_id.is_none() && !is_scanning {
@@ -175,6 +155,102 @@ pub fn paint_file_source(
         }
         BrowseLevel::AllTitles => {
             paint_title_list(ui, data, actions);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Breadcrumb
+// ---------------------------------------------------------------------------
+
+fn paint_breadcrumb(
+    ui: &mut egui::Ui,
+    source_idx: usize,
+    data: &FileRenderData,
+    actions: &mut Vec<UiAction>,
+) {
+    match &data.browse_level {
+        // Root levels – no breadcrumb needed
+        BrowseLevel::Artists | BrowseLevel::AllAlbums | BrowseLevel::AllTitles => {}
+
+        // Albums filtered by artist
+        BrowseLevel::Albums { artist_name, .. } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🎤").size(13.0));
+                // Clicking the artist name goes back to the artist list
+                if ui
+                    .link(egui::RichText::new(artist_name).size(13.0).strong())
+                    .on_hover_text("Back to all artists")
+                    .clicked()
+                {
+                    actions.push(UiAction::SwitchBrowseMode {
+                        source_idx,
+                        mode: BrowseMode::ByArtist,
+                    });
+                }
+            });
+            ui.add_space(2.0);
+        }
+
+        // Titles filtered by artist + album
+        BrowseLevel::Titles {
+            artist_name,
+            album_name,
+            ..
+        } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🎤").size(13.0));
+                if ui
+                    .link(egui::RichText::new(artist_name).size(13.0).strong())
+                    .on_hover_text("Back to all artists")
+                    .clicked()
+                {
+                    actions.push(UiAction::SwitchBrowseMode {
+                        source_idx,
+                        mode: BrowseMode::ByArtist,
+                    });
+                }
+                ui.label(egui::RichText::new("›").weak().size(13.0));
+                ui.label(egui::RichText::new("💿").size(13.0));
+                // Clicking the album name goes back to albums for this artist
+                if let BrowseLevel::Titles {
+                    artist_id,
+                    artist_name,
+                    ..
+                } = &data.browse_level
+                {
+                    if ui
+                        .link(egui::RichText::new(album_name).size(13.0).strong())
+                        .on_hover_text("Back to albums for this artist")
+                        .clicked()
+                    {
+                        actions.push(UiAction::BrowseAlbums {
+                            source_idx,
+                            artist_id: *artist_id,
+                            artist_name: artist_name.clone(),
+                        });
+                    }
+                }
+            });
+            ui.add_space(2.0);
+        }
+
+        // Titles filtered by album only (from "All Albums" view)
+        BrowseLevel::TitlesForAlbum { album_name, .. } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("💿").size(13.0));
+                if ui
+                    .link(egui::RichText::new(album_name).size(13.0).strong())
+                    .on_hover_text("Back to all albums")
+                    .clicked()
+                {
+                    actions.push(UiAction::SwitchBrowseMode {
+                        source_idx,
+                        mode: BrowseMode::ByAlbum,
+                    });
+                }
+            });
+            ui.add_space(2.0);
         }
     }
 }
