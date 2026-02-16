@@ -5,9 +5,6 @@ use crate::pages::{semi_transparent_group_frame, source_type_icon};
 
 pub fn paint_settings(ui: &mut egui::Ui, config: &Config) {
     ui.add_space(8.0);
-    ui.heading("Settings");
-    ui.separator();
-    ui.add_space(8.0);
 
     semi_transparent_group_frame(ui).show(ui, |ui| {
         ui.label(egui::RichText::new("Appearance").strong().size(15.0));

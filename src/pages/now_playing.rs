@@ -11,15 +11,22 @@ pub fn paint_now_playing(
     volume: f32,
     cover_texture: Option<&egui::TextureHandle>,
 ) {
-    ui.add_space(8.0);
-    ui.heading("Now Playing");
-    ui.separator();
-    ui.add_space(20.0);
+    let art_size = egui::vec2(150.0, 150.0);
 
-    // Album art or placeholder
-    ui.vertical_centered(|ui| {
-        let art_size = egui::vec2(200.0, 200.0);
+    // Estimate the height of the content block so we can vertically center it.
+    // The content is a horizontal row whose tallest element is the album art (150px).
+    let content_height = art_size.y;
 
+    let available_height = ui.available_height();
+    let top_padding = ((available_height - content_height) / 2.0).max(0.0);
+
+    ui.add_space(top_padding);
+
+    ui.horizontal(|ui| {
+        let available_width = ui.available_width();
+        ui.add_space(available_width / 10.0);
+
+        // Album art or placeholder on the left
         if let Some(texture) = cover_texture {
             let img_size = texture.size_vec2();
             let img_aspect = img_size.x / img_size.y;
@@ -63,51 +70,49 @@ pub fn paint_now_playing(
                 ui.visuals().text_color(),
             );
         }
-    });
 
-    ui.add_space(20.0);
+        ui.add_space(16.0);
 
-    ui.vertical_centered(|ui| {
-        let title = if current_title.title.is_empty() {
-            "No track selected"
-        } else {
-            &current_title.title
-        };
-        ui.label(egui::RichText::new(title).strong().size(20.0));
-        ui.add_space(4.0);
+        // Title, artist, album, and status text on the right, vertically centered
+        // relative to the album art
+        ui.vertical(|ui| {
+            // Estimate text block height to center it within the art_size height
+            let title_height = 24.0; // approximate for size 20
+            let spacing = 4.0;
+            let artist_height = 18.0; // approximate for size 15
+            let album_height = if !current_title.album.is_empty() && current_title.album != "-" {
+                18.0
+            } else {
+                0.0
+            };
+            let text_block_height = title_height + spacing + artist_height + album_height;
+            let text_top_padding = ((art_size.y - text_block_height) / 2.0).max(0.0);
 
-        let artist = if current_title.artist.is_empty() {
-            "Unknown Artist"
-        } else {
-            &current_title.artist
-        };
-        ui.label(egui::RichText::new(artist).weak().size(15.0));
+            ui.add_space(text_top_padding);
 
-        let album = if current_title.album.is_empty() || current_title.album == "-" {
-            ""
-        } else {
-            &current_title.album
-        };
-        if !album.is_empty() {
-            ui.label(egui::RichText::new(album).weak().italics());
-        }
-    });
+            let title = if current_title.title.is_empty() {
+                "No track selected"
+            } else {
+                &current_title.title
+            };
+            ui.label(egui::RichText::new(title).strong().size(20.0));
+            ui.add_space(4.0);
 
-    ui.add_space(20.0);
+            let artist = if current_title.artist.is_empty() {
+                "Unknown Artist"
+            } else {
+                &current_title.artist
+            };
+            ui.label(egui::RichText::new(artist).weak().size(15.0));
 
-    ui.vertical_centered(|ui| {
-        let status = if is_playing && !is_paused {
-            "▶ Playing"
-        } else if is_paused {
-            "⏸ Paused"
-        } else {
-            "⏹ Stopped"
-        };
-        ui.label(egui::RichText::new(status).size(14.0));
-        ui.label(
-            egui::RichText::new(format!("Volume: {:.0}%", volume * 100.0))
-                .weak()
-                .small(),
-        );
+            let album = if current_title.album.is_empty() || current_title.album == "-" {
+                ""
+            } else {
+                &current_title.album
+            };
+            if !album.is_empty() {
+                ui.label(egui::RichText::new(album).weak().italics());
+            }
+        });
     });
 }

@@ -1,0 +1,10 @@
+[build]
+default-target = "aarch64-unknown-linux-gnu" # use this target if none is explicitly provided
+
+pre-build = [ # additional commands to run prior to building the package
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt update && apt --assume-yes install libssl-dev:$CROSS_DEB_ARCH libudev-dev:$CROSS_DEB_ARCH libasound-dev:$CROSS_DEB_ARCH libxkbcommon-dev:$CROSS_DEB_ARCH libgbm-dev:$CROSS_DEB_ARCH libinput-dev:$CROSS_DEB_ARCH",
+]
+
+[target.aarch64-unknown-linux-gnu]
+image = "cross-debian-aarch64:latest"

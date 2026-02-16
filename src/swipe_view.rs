@@ -1,12 +1,43 @@
 // ---------------------------------------------------------------------------
-// Swipe view
+// Swipe view – touch-friendly implementation
 // ---------------------------------------------------------------------------
+//
+// Instead of using `Sense::drag()` on the full area (which steals touch events
+// from child widgets such as buttons and scroll areas), we allocate the area
+// with `Sense::hover()` and passively observe the raw pointer input to detect
+// horizontal swipe gestures.
+//
+// We use **position-based** offset (current pointer position minus press
+// origin) rather than accumulated per-frame deltas.  This makes the gesture
+// detection immune to coordinate jitter that can build up over many frames on
+// noisy touch panels.
+
+/// Minimum horizontal displacement (logical pixels) before a gesture is
+/// visually treated as a page-swipe (the pages start following the finger).
+const SWIPE_VISUAL_THRESHOLD: f32 = 14.0;
+
+/// Fraction of the page width the finger must travel to actually change the
+/// page when the gesture ends.
+const SWIPE_PAGE_FRACTION: f32 = 0.12;
 
 pub struct SwipeView {
     target_page: usize,
     num_pages: usize,
-    drag_offset: f32,
-    is_dragging: bool,
+
+    // -- gesture tracking (persisted across frames) --
+    /// The position where the current pointer press started, if it was inside
+    /// our rect.  `None` when no gesture is being tracked.
+    gesture_start: Option<egui::Pos2>,
+
+    /// Displacement from `gesture_start` to the current pointer position.
+    /// Computed from positions, **not** accumulated deltas, so it is robust
+    /// against per-frame jitter.
+    gesture_offset: egui::Vec2,
+
+    /// `true` once the gesture looks like a deliberate horizontal swipe (the
+    /// pages start following the finger).  This is a visual flag only – the
+    /// actual decision to change pages is made when the pointer is released.
+    gesture_committed: bool,
 }
 
 impl SwipeView {
@@ -14,8 +45,9 @@ impl SwipeView {
         Self {
             target_page: 0,
             num_pages,
-            drag_offset: 0.0,
-            is_dragging: false,
+            gesture_start: None,
+            gesture_offset: egui::Vec2::ZERO,
+            gesture_committed: false,
         }
     }
 
@@ -25,6 +57,12 @@ impl SwipeView {
 
     pub fn current_page(&self) -> usize {
         self.target_page
+    }
+
+    fn reset_gesture(&mut self) {
+        self.gesture_start = None;
+        self.gesture_offset = egui::Vec2::ZERO;
+        self.gesture_committed = false;
     }
 
     /// Show the swipe view. `paint_background` is called for each visible page
@@ -39,51 +77,102 @@ impl SwipeView {
         let available_width = ui.available_width();
         let available_height = ui.available_height();
 
-        // Allocate the full area and make it sense drags
-        let (rect, response) = ui.allocate_exact_size(
+        // Allocate the full area.  We use `Sense::hover()` so that this widget
+        // does **not** claim any press / drag interactions – those are left for
+        // the child widgets (buttons, scroll areas) rendered below.
+        let (rect, _response) = ui.allocate_exact_size(
             egui::vec2(available_width, available_height),
-            egui::Sense::drag(),
+            egui::Sense::hover(),
         );
 
-        // Handle drag gestures
-        if response.dragged() {
-            self.is_dragging = true;
-            self.drag_offset += response.drag_delta().x;
-        }
+        // -----------------------------------------------------------------
+        // Swipe gesture detection (passive pointer observation)
+        // -----------------------------------------------------------------
+        let pointer_pressed = ui.input(|i| i.pointer.any_pressed());
+        let pointer_down = ui.input(|i| i.pointer.any_down());
+        let pointer_released = ui.input(|i| i.pointer.any_released());
+        let press_origin = ui.input(|i| i.pointer.press_origin());
+        let interact_pos = ui.input(|i| i.pointer.interact_pos());
 
-        if response.drag_stopped() {
-            self.is_dragging = false;
-            let swipe_threshold = available_width * 0.15;
-
-            if self.drag_offset < -swipe_threshold && self.target_page < self.num_pages - 1 {
-                self.target_page += 1;
-            } else if self.drag_offset > swipe_threshold && self.target_page > 0 {
-                self.target_page -= 1;
+        // Start tracking when the pointer is pressed inside our rect.
+        if pointer_pressed {
+            if let Some(pos) = press_origin {
+                if rect.contains(pos) {
+                    self.gesture_start = Some(pos);
+                    self.gesture_offset = egui::Vec2::ZERO;
+                    self.gesture_committed = false;
+                }
             }
-            self.drag_offset = 0.0;
         }
 
-        // Animate towards target page
-        let animation_id = response.id.with("swipe_anim");
+        // While the pointer is down, compute position-based offset.
+        if let (Some(start), Some(current)) = (self.gesture_start, interact_pos) {
+            if pointer_down {
+                // Position-based: immune to accumulated jitter.
+                self.gesture_offset = current - start;
+
+                // Visually commit once the horizontal distance is large enough
+                // and the gesture is predominantly horizontal.
+                if !self.gesture_committed {
+                    let abs_x = self.gesture_offset.x.abs();
+                    let abs_y = self.gesture_offset.y.abs();
+                    if abs_x >= SWIPE_VISUAL_THRESHOLD && abs_x > abs_y {
+                        self.gesture_committed = true;
+                    }
+                }
+            }
+        }
+
+        // When the pointer is released, decide whether to change pages.
+        // The check is intentionally strict: the final displacement must be
+        // predominantly horizontal *and* exceed the page-fraction threshold.
+        if pointer_released && self.gesture_start.is_some() {
+            let ox = self.gesture_offset.x;
+            let oy = self.gesture_offset.y;
+            let is_horizontal = ox.abs() > oy.abs();
+            let swipe_threshold = available_width * SWIPE_PAGE_FRACTION;
+
+            if is_horizontal && ox.abs() > swipe_threshold {
+                if ox < 0.0 && self.target_page < self.num_pages - 1 {
+                    self.target_page += 1;
+                } else if ox > 0.0 && self.target_page > 0 {
+                    self.target_page -= 1;
+                }
+            }
+            self.reset_gesture();
+        }
+
+        // Safety: if the pointer is not down but we still think we are
+        // tracking, reset.  This catches edge-cases where the release event
+        // was consumed by another widget or lost.
+        if !pointer_down && self.gesture_start.is_some() {
+            self.reset_gesture();
+        }
+
+        // -----------------------------------------------------------------
+        // Compute visual page offset
+        // -----------------------------------------------------------------
+        let animation_id = ui.id().with("swipe_anim");
         let animated_page =
             ui.ctx()
                 .animate_value_with_time(animation_id, self.target_page as f32, 0.25);
 
-        // During drag, offset the view by the drag amount
-        let page_offset = if self.is_dragging {
-            // Clamp so you can't drag beyond the edges too far
-            let raw = animated_page - self.drag_offset / available_width;
+        // During a committed swipe the pages follow the finger.
+        let page_offset = if self.gesture_committed {
+            let raw = animated_page - self.gesture_offset.x / available_width;
             raw.clamp(-0.3, (self.num_pages as f32) - 0.7)
         } else {
             animated_page
         };
 
+        // -----------------------------------------------------------------
         // Paint each visible page
+        // -----------------------------------------------------------------
         let clip_rect = rect;
         for page_idx in 0..self.num_pages {
             let page_x = rect.left() + (page_idx as f32 - page_offset) * available_width;
 
-            // Only render pages that are at least partially visible
+            // Only render pages that are at least partially visible.
             if page_x + available_width < rect.left() - 1.0 || page_x > rect.right() + 1.0 {
                 continue;
             }
@@ -114,8 +203,8 @@ impl SwipeView {
                 });
         }
 
-        // Request repaint during animation/drag for smooth visuals
-        if self.is_dragging || (page_offset - self.target_page as f32).abs() > 0.001 {
+        // Request repaint during animation / committed drag for smooth visuals
+        if self.gesture_committed || (page_offset - self.target_page as f32).abs() > 0.001 {
             ui.ctx().request_repaint();
         }
     }

@@ -192,11 +192,11 @@ impl BackgroundImages {
 
         let images_dir = Path::new("images");
         let pairs: [(&str, &str); 5] = [
-            ("musik.jpg", "bg_music"),
+            ("music.jpg", "bg_music"),
             ("radio.jpg", "bg_radio"),
-            ("home.jpg", "bg_playing"),
+            ("playing.jpg", "bg_playing"),
             ("disc.jpg", "bg_cd"),
-            ("remote.jpg", "bg_settings"),
+            ("settings.jpg", "bg_settings"),
         ];
 
         let mut textures: Vec<Option<TextureHandle>> = Vec::new();
@@ -604,40 +604,61 @@ impl Homeplayer {
                 if self.is_paused {
                     self.player.pause(); // toggles pause→play
                 } else if !self.is_playing {
-                    // Nothing playing – start playback of all titles at the
-                    // current browse level of the visible file source page.
+                    // Nothing playing – start playback depending on the
+                    // current page type (file source or CD source).
                     let current_page = self.swipe_view.current_page();
                     if let Some(DynamicPage::Source(source_idx)) = self.pages.get(current_page) {
                         let source_idx = *source_idx;
-                        if let Some(state) = self.file_source_states.get(&source_idx)
-                            && let Some(source_id) = state.source_id
-                            && let Some(ref store) = self.music_store
-                        {
-                            let titles = match &state.browse_level {
-                                BrowseLevel::Artists
-                                | BrowseLevel::AllAlbums
-                                | BrowseLevel::AllTitles => store.get_titles(source_id).ok(),
-                                BrowseLevel::Albums { artist_id, .. } => {
-                                    store.get_titles_by_artist(source_id, *artist_id).ok()
+                        let source_type = &self.config.sources[source_idx].source_type;
+                        match source_type {
+                            ConfigSourceType::File => {
+                                if let Some(state) = self.file_source_states.get(&source_idx)
+                                    && let Some(source_id) = state.source_id
+                                    && let Some(ref store) = self.music_store
+                                {
+                                    let titles = match &state.browse_level {
+                                        BrowseLevel::Artists
+                                        | BrowseLevel::AllAlbums
+                                        | BrowseLevel::AllTitles => {
+                                            store.get_titles(source_id).ok()
+                                        }
+                                        BrowseLevel::Albums { artist_id, .. } => {
+                                            store.get_titles_by_artist(source_id, *artist_id).ok()
+                                        }
+                                        BrowseLevel::Titles {
+                                            artist_id,
+                                            album_id,
+                                            ..
+                                        } => store
+                                            .get_titles_by_artist_and_album(
+                                                source_id, *artist_id, *album_id,
+                                            )
+                                            .ok(),
+                                        BrowseLevel::TitlesForAlbum { album_id, .. } => {
+                                            store.get_titles_by_album(source_id, *album_id).ok()
+                                        }
+                                    };
+                                    if let Some(titles) = titles {
+                                        self.process_action(UiAction::PlayTitles {
+                                            titles,
+                                            start_index: 0,
+                                        });
+                                    }
                                 }
-                                BrowseLevel::Titles {
-                                    artist_id,
-                                    album_id,
-                                    ..
-                                } => store
-                                    .get_titles_by_artist_and_album(
-                                        source_id, *artist_id, *album_id,
-                                    )
-                                    .ok(),
-                                BrowseLevel::TitlesForAlbum { album_id, .. } => {
-                                    store.get_titles_by_album(source_id, *album_id).ok()
+                            }
+                            ConfigSourceType::CD => {
+                                // Play all audio tracks from the beginning
+                                if let Some(state) = self.cd_source_states.get(&source_idx) {
+                                    if !state.tracks.is_empty() {
+                                        self.process_action(UiAction::PlayCd {
+                                            source_idx,
+                                            start_track: 0,
+                                        });
+                                    }
                                 }
-                            };
-                            if let Some(titles) = titles {
-                                self.process_action(UiAction::PlayTitles {
-                                    titles,
-                                    start_index: 0,
-                                });
+                            }
+                            ConfigSourceType::Stream => {
+                                // Stream sources don't support generic "play all"
                             }
                         }
                     }
@@ -806,7 +827,7 @@ impl eframe::App for Homeplayer {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let button_size = egui::vec2(32.0, 32.0);
+                let button_size = egui::vec2(48.0, 48.0);
 
                 // Previous track
                 if ui.add_sized(button_size, egui::Button::new("⏮")).clicked() {
@@ -865,7 +886,7 @@ impl eframe::App for Homeplayer {
 
                     // Volume slider on the right
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().slider_width = 100.0;
+                        ui.spacing_mut().slider_width = 150.0;
                         let mut vol = self.volume;
                         let response =
                             ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
@@ -911,7 +932,7 @@ impl eframe::App for Homeplayer {
                             egui::Color32::TRANSPARENT
                         });
 
-                    let response = ui.add_sized(egui::vec2(tab_width - 4.0, 36.0), button);
+                    let response = ui.add_sized(egui::vec2(tab_width - 4.0, 48.0), button);
 
                     if response.clicked() {
                         self.swipe_view.set_page(i);

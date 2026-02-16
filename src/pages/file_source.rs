@@ -48,7 +48,7 @@ fn displayed_level(bl: &BrowseLevel) -> DisplayedLevel {
 
 pub fn paint_file_source(
     ui: &mut egui::Ui,
-    source: &Source,
+    _source: &Source,
     source_idx: usize,
     data: &FileRenderData,
     is_scanning: bool,
@@ -56,34 +56,11 @@ pub fn paint_file_source(
 ) {
     ui.add_space(8.0);
 
-    // Header – always show the source name
-    ui.heading(format!("📁 {}", source.name));
-    ui.separator();
-
-    // Action bar
+    // Action bar: browse mode buttons on the left, Scan on the right
     ui.horizontal(|ui| {
-        if is_scanning {
-            ui.spinner();
-            ui.label(egui::RichText::new("Scanning...").weak().italics());
-        } else if ui
-            .button("🔄 Scan")
-            .on_hover_text("Scan music folder for changes")
-            .clicked()
-        {
-            actions.push(UiAction::ScanSource { source_idx });
-        }
-    });
-
-    ui.add_space(4.0);
-
-    // Browse mode toggle buttons – always visible, highlighted by what is
-    // currently *displayed* (not by the stored browse_mode).
-    if data.source_id.is_some() {
-        let current_display = displayed_level(&data.browse_level);
-
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("View:").weak().small());
-            ui.add_space(4.0);
+        // Browse mode toggle buttons (left side)
+        if data.source_id.is_some() {
+            let current_display = displayed_level(&data.browse_level);
 
             let buttons: [(BrowseMode, &str, DisplayedLevel); 3] = [
                 (BrowseMode::ByArtist, "🎤 Artist", DisplayedLevel::Artists),
@@ -93,14 +70,16 @@ pub fn paint_file_source(
 
             for (mode, label, level) in &buttons {
                 let is_selected = *level == current_display;
-                let text = egui::RichText::new(*label).size(13.0);
+                let text = egui::RichText::new(*label).size(15.0);
                 let text = if is_selected { text.strong() } else { text };
 
-                let button = egui::Button::new(text).fill(if is_selected {
-                    ui.visuals().selection.bg_fill
-                } else {
-                    egui::Color32::TRANSPARENT
-                });
+                let button = egui::Button::new(text)
+                    .min_size(egui::vec2(0.0, 48.0))
+                    .fill(if is_selected {
+                        ui.visuals().selection.bg_fill
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    });
 
                 if ui.add(button).clicked() && !is_selected {
                     // Clicking a view button always resets to the unfiltered
@@ -111,10 +90,29 @@ pub fn paint_file_source(
                     });
                 }
             }
+        }
+
+        // Scan button (right side)
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if is_scanning {
+                ui.label(egui::RichText::new("Scanning...").weak().italics());
+                ui.spinner();
+            } else if ui
+                .add_sized(
+                    egui::vec2(120.0, 48.0),
+                    egui::Button::new(egui::RichText::new("🔄 Scan").size(16.0)),
+                )
+                .on_hover_text("Scan music folder for changes")
+                .clicked()
+            {
+                actions.push(UiAction::ScanSource { source_idx });
+            }
         });
+    });
 
-        ui.add_space(4.0);
+    ui.add_space(4.0);
 
+    if data.source_id.is_some() {
         // Breadcrumb: show which artist / album filter is active
         paint_breadcrumb(ui, source_idx, data, actions);
     }
@@ -286,11 +284,11 @@ fn paint_artist_list(
 
         let fill = semi_transparent_fill(ui);
         for artist in &data.artists {
-            let response = ui.add_sized(
-                egui::vec2(ui.available_width(), 40.0),
-                egui::Button::new(egui::RichText::new(format!("🎤  {}", artist.name)).size(15.0))
+            let response = ui.add(
+                egui::Button::new(egui::RichText::new(format!("🎤  {}", artist.name)).size(16.0))
                     .fill(fill)
-                    .frame(true),
+                    .frame(true)
+                    .min_size(egui::vec2(ui.available_width(), 48.0)),
             );
             if response.clicked() {
                 actions.push(UiAction::BrowseAlbums {
@@ -332,11 +330,11 @@ fn paint_album_list_artist_mode(
 
         let fill = semi_transparent_fill(ui);
         for album in &data.albums {
-            let response = ui.add_sized(
-                egui::vec2(ui.available_width(), 40.0),
-                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(15.0))
+            let response = ui.add(
+                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(16.0))
                     .fill(fill)
-                    .frame(true),
+                    .frame(true)
+                    .min_size(egui::vec2(ui.available_width(), 48.0)),
             );
             if response.clicked() {
                 actions.push(UiAction::BrowseTitles {
@@ -378,11 +376,11 @@ fn paint_album_list_album_mode(
 
         let fill = semi_transparent_fill(ui);
         for album in &data.albums {
-            let response = ui.add_sized(
-                egui::vec2(ui.available_width(), 40.0),
-                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(15.0))
+            let response = ui.add(
+                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(16.0))
                     .fill(fill)
-                    .frame(true),
+                    .frame(true)
+                    .min_size(egui::vec2(ui.available_width(), 48.0)),
             );
             if response.clicked() {
                 actions.push(UiAction::BrowseAlbumTitles {
@@ -422,11 +420,11 @@ fn paint_title_list(ui: &mut egui::Ui, data: &FileRenderData, actions: &mut Vec<
                 format!("🎵  {}", title.name)
             };
 
-            let response = ui.add_sized(
-                egui::vec2(ui.available_width(), 36.0),
-                egui::Button::new(egui::RichText::new(label).size(14.0))
+            let response = ui.add(
+                egui::Button::new(egui::RichText::new(label).size(15.0))
                     .fill(fill)
-                    .frame(true),
+                    .frame(true)
+                    .min_size(egui::vec2(ui.available_width(), 48.0)),
             );
             if response.clicked() {
                 actions.push(UiAction::PlayTitles {

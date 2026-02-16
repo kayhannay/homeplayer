@@ -6,8 +6,6 @@ use crate::pages::semi_transparent_fill;
 
 pub fn paint_stream_source(ui: &mut egui::Ui, source: &Source, actions: &mut Vec<UiAction>) {
     ui.add_space(8.0);
-    ui.heading(format!("📻 {}", source.name));
-    ui.separator();
 
     if source.stations.is_empty() {
         ui.add_space(20.0);
@@ -37,11 +35,11 @@ pub fn paint_stream_source(ui: &mut egui::Ui, source: &Source, actions: &mut Vec
     let fill = semi_transparent_fill(ui);
     for station in &source.stations {
         ui.add_space(2.0);
-        let response = ui.add_sized(
-            egui::vec2(ui.available_width(), 48.0),
+        let response = ui.add(
             egui::Button::new(egui::RichText::new(format!("📻  {}", station.name)).size(16.0))
                 .fill(fill)
-                .frame(true),
+                .frame(true)
+                .min_size(egui::vec2(ui.available_width(), 48.0)),
         );
 
         if response.clicked() {
