@@ -3295,6 +3295,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "icy-metadata",
+ "libc",
  "rodio",
  "stream-download",
  "tracing",

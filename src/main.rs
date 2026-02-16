@@ -11,6 +11,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use anyhow;
+
 use eframe::{NativeOptions, egui};
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rodio_player::{PlayerState, RodioPlayer, SoundItem, TitleChanged};
@@ -20,8 +22,8 @@ use tracing::{debug, error, info, warn};
 use crate::config::{AudioConfig, Config, ConfigSourceType};
 use crate::music_store::{MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
-    FileRenderData, paint_cd_source, paint_file_source, paint_now_playing, paint_settings,
-    paint_stream_source, source_type_icon,
+    CdSourceState, FileRenderData, paint_cd_source, paint_file_source, paint_now_playing,
+    paint_settings, paint_stream_source, source_type_icon,
 };
 use crate::swipe_view::SwipeView;
 
@@ -95,6 +97,14 @@ fn main() -> eframe::Result<()> {
         }
     }
 
+    // Initialize CD source states
+    let mut cd_source_states: HashMap<usize, CdSourceState> = HashMap::new();
+    for (i, source) in config.sources.iter().enumerate() {
+        if matches!(source.source_type, ConfigSourceType::CD) {
+            cd_source_states.insert(i, CdSourceState::new());
+        }
+    }
+
     // Tokio runtime for async stream playback
     let tokio_rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
@@ -121,6 +131,8 @@ fn main() -> eframe::Result<()> {
                 volume: initial_volume,
                 pages,
                 file_source_states,
+                cd_source_states,
+                cd_toc_rx: None,
                 tokio_rt,
                 scanning: Arc::new(AtomicBool::new(false)),
                 scan_completed_source: None,
@@ -320,6 +332,16 @@ pub(crate) enum UiAction {
         source_idx: usize,
         mode: BrowseMode,
     },
+    LoadCdToc {
+        source_idx: usize,
+    },
+    PlayCd {
+        source_idx: usize,
+        start_track: usize,
+    },
+    EjectCd {
+        source_idx: usize,
+    },
     PlayerPlay,
     PlayerPause,
     PlayerStop,
@@ -345,6 +367,11 @@ struct Homeplayer {
     volume: f32,
     pages: Vec<DynamicPage>,
     file_source_states: HashMap<usize, FileSourceState>,
+    cd_source_states: HashMap<usize, CdSourceState>,
+    cd_toc_rx: Option<(
+        usize,
+        mpsc::Receiver<Result<rodio_player::cd_audio::CdInfo, anyhow::Error>>,
+    )>,
     tokio_rt: tokio::runtime::Runtime,
     scanning: Arc<AtomicBool>,
     scan_completed_source: Option<usize>,
@@ -359,6 +386,36 @@ impl Homeplayer {
         while let Ok(title) = self.title_rx.try_recv() {
             debug!("Title changed: {} - {}", title.artist, title.title);
             self.current_title = title;
+        }
+
+        // Poll for CD TOC read completion
+        if let Some((source_idx, ref rx)) = self.cd_toc_rx {
+            if let Ok(result) = rx.try_recv() {
+                let idx = source_idx;
+                self.cd_toc_rx = None;
+                if let Some(state) = self.cd_source_states.get_mut(&idx) {
+                    state.loading = false;
+                    match result {
+                        Ok(cd_info) => {
+                            let audio_count = cd_info.audio_tracks().len();
+                            info!(
+                                "CD TOC loaded: {} tracks ({} audio)",
+                                cd_info.tracks.len(),
+                                audio_count
+                            );
+                            state.disc_present = true;
+                            state.status = format!("{audio_count} audio tracks found.");
+                            state.tracks = cd_info.tracks;
+                        }
+                        Err(e) => {
+                            error!("Failed to read CD TOC: {e}");
+                            state.disc_present = false;
+                            state.tracks.clear();
+                            state.status = format!("Failed to read disc: {e}");
+                        }
+                    }
+                }
+            }
         }
 
         // Drain button state changes
@@ -601,6 +658,60 @@ impl Homeplayer {
             UiAction::PlayerVolume(vol) => {
                 self.player.volume(vol);
             }
+            UiAction::LoadCdToc { source_idx } => {
+                let source = &self.config.sources[source_idx];
+                let device = source.path.clone();
+                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                    state.loading = true;
+                    state.status = "Reading disc…".to_string();
+                    state.tracks.clear();
+                }
+                // Read the TOC synchronously on a background thread so the UI
+                // stays responsive.
+                let (toc_tx, toc_rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let result = rodio_player::cd_audio::read_cd_toc(&device);
+                    let _ = toc_tx.send(result);
+                });
+                // We cannot block the UI thread, so we poll the result channel
+                // in drain_channels.  Store the receiver for later polling.
+                self.cd_toc_rx = Some((source_idx, toc_rx));
+            }
+            UiAction::PlayCd {
+                source_idx,
+                start_track,
+            } => {
+                let source = &self.config.sources[source_idx];
+                let device = source.path.clone();
+                if let Some(state) = self.cd_source_states.get(&source_idx) {
+                    let tracks = state.tracks.clone();
+                    if let Err(e) = self.player.play_cd(&device, tracks, start_track) {
+                        error!("Failed to start CD playback: {e}");
+                    }
+                }
+            }
+            UiAction::EjectCd { source_idx } => {
+                let source = &self.config.sources[source_idx];
+                let device = source.path.clone();
+                self.player.stop();
+                match rodio_player::cd_audio::eject_cd(&device) {
+                    Ok(_) => {
+                        info!("CD ejected");
+                        if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                            state.tracks.clear();
+                            state.disc_present = false;
+                            state.status =
+                                "Disc ejected. Insert a CD and press Refresh.".to_string();
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to eject CD: {e}");
+                        if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                            state.status = format!("Eject failed: {e}");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -841,6 +952,9 @@ impl eframe::App for Homeplayer {
             })
             .collect();
 
+        // Clone CD source states for rendering
+        let cd_render_data: HashMap<usize, CdSourceState> = self.cd_source_states.clone();
+
         // Pre-build a lookup of which background texture to use for each page
         let bg_for_page: Vec<Option<egui::TextureId>> = pages
             .iter()
@@ -940,7 +1054,17 @@ impl eframe::App for Homeplayer {
                                     paint_stream_source(ui, source, &mut actions);
                                 }
                                 ConfigSourceType::CD => {
-                                    paint_cd_source(ui, source);
+                                    let cd_state = cd_render_data
+                                        .get(source_idx)
+                                        .cloned()
+                                        .unwrap_or_else(CdSourceState::new);
+                                    paint_cd_source(
+                                        ui,
+                                        source,
+                                        *source_idx,
+                                        &cd_state,
+                                        &mut actions,
+                                    );
                                 }
                             }
                         }

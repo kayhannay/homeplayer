@@ -4,11 +4,13 @@
 //! So it provides
 //! a play queue handling with common functionality like 'play', 'skip' etc.
 //! but also informs about events like title changes and the current player
-//! state. Currently there is support to play a (list) of files or Internet
-//! streams like radio stations.
+//! state. Currently there is support to play a (list) of files, Internet
+//! streams like radio stations, and audio CDs.
 //!
 //! [rodio]: https://crates.io/crates/rodio
 //! [homeplayer]: https://github.com/kayhannay/homeplayer
+
+pub mod cd_audio;
 
 use anyhow::Error;
 use icy_metadata::{IcyHeaders, IcyMetadataReader, RequestIcyMetadata};
@@ -22,7 +24,7 @@ use stream_download::http::{HttpStream, reqwest::Client};
 use stream_download::storage::bounded::BoundedStorageProvider;
 use stream_download::storage::memory::MemoryStorageProvider;
 use stream_download::{Settings, StreamDownload};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 /// Data structure that is sent over the provided channel to inform
 /// about the audio title that is currently played.
@@ -93,6 +95,38 @@ impl RodioPlayer {
 
     pub fn append(&mut self, mut sound_items: Vec<SoundItem>) {
         self.sound_queue.lock().unwrap().append(&mut sound_items);
+    }
+
+    pub fn play_cd(
+        &mut self,
+        device: &str,
+        tracks: Vec<cd_audio::CdTrackInfo>,
+        start_index: usize,
+    ) -> Result<(), Error> {
+        self.stop();
+        self.clear();
+
+        let player_sink = self.sink.clone();
+        let title_changed_sender = self.title_changed_sender.clone();
+        let button_state_sender = self.button_state_sender.clone();
+        let device = device.to_string();
+        let queue_index = Arc::clone(&self.sound_queue_index);
+
+        let _ = spawn(move || {
+            match start_cd_playback(
+                player_sink,
+                queue_index,
+                &device,
+                tracks,
+                start_index,
+                title_changed_sender,
+                button_state_sender,
+            ) {
+                Ok(_) => (),
+                Err(error) => error!("Could not start CD playback: {error}"),
+            };
+        });
+        Ok(())
     }
 
     pub fn play(&mut self) -> Result<(), Error> {
@@ -284,6 +318,60 @@ impl RodioPlayer {
             }
         }
     }
+}
+
+fn start_cd_playback(
+    player_sink: Arc<Sink>,
+    queue_index: Arc<Mutex<usize>>,
+    device: &str,
+    tracks: Vec<cd_audio::CdTrackInfo>,
+    start_index: usize,
+    title_changed_sender: Sender<TitleChanged>,
+    button_state_sender: Sender<PlayerState>,
+) -> Result<(), Error> {
+    button_state_sender.send(PlayerState::Playing)?;
+    button_state_sender.send(PlayerState::Seekable)?;
+    button_state_sender.send(PlayerState::StartPlaying)?;
+
+    // Reset the queue index so stop/skip controls work
+    *queue_index.lock().unwrap() = start_index;
+
+    let audio_tracks: Vec<&cd_audio::CdTrackInfo> = tracks.iter().filter(|t| t.is_audio).collect();
+
+    while *queue_index.lock().unwrap() < audio_tracks.len() {
+        let idx = *queue_index.lock().unwrap();
+        let track = audio_tracks[idx];
+        *queue_index.lock().unwrap() = idx + 1;
+
+        info!(
+            "Playing CD track {} (LBA {}–{})",
+            track.number, track.start_lba, track.end_lba
+        );
+
+        let _ = title_changed_sender.send(TitleChanged {
+            artist: String::new(),
+            album: "Audio CD".to_string(),
+            title: format!("Track {}", track.number),
+            cover: String::new(),
+        });
+
+        match cd_audio::open_track(device, track) {
+            Ok(source) => {
+                player_sink.append(source);
+                debug!("Start CD track {} playback...", track.number);
+                player_sink.play();
+                player_sink.sleep_until_end();
+                debug!("CD track {} finished", track.number);
+            }
+            Err(e) => {
+                error!("Failed to open CD track {}: {e}", track.number);
+            }
+        }
+    }
+
+    button_state_sender.send(PlayerState::Stopped)?;
+    button_state_sender.send(PlayerState::Unseekable)?;
+    Ok(())
 }
 
 fn start_playback_queue(

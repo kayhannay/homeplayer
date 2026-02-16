@@ -7,7 +7,7 @@ pub mod stream_source;
 use crate::config::ConfigSourceType;
 use eframe::egui;
 
-pub use cd_source::paint_cd_source;
+pub use cd_source::{CdSourceState, paint_cd_source};
 pub use file_source::{FileRenderData, paint_file_source};
 pub use now_playing::paint_now_playing;
 pub use settings::paint_settings;
