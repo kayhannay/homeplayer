@@ -161,6 +161,7 @@ fn main() -> eframe::Result<()> {
                 cover_texture: None,
                 cover_texture_path: String::new(),
                 kids_cover_textures: HashMap::new(),
+                station_textures: HashMap::new(),
                 settings_state,
             }))
         }),
@@ -425,6 +426,7 @@ struct Homeplayer {
     cover_texture: Option<TextureHandle>,
     cover_texture_path: String,
     kids_cover_textures: HashMap<String, TextureHandle>,
+    station_textures: HashMap<String, TextureHandle>,
     settings_state: SettingsState,
 }
 
@@ -999,6 +1001,27 @@ impl eframe::App for Homeplayer {
             }
         }
 
+        // Lazily load station icon textures
+        for source in &self.config.sources {
+            if source.source_type == ConfigSourceType::Stream {
+                for station in &source.stations {
+                    if !station.icon.is_empty()
+                        && !self.station_textures.contains_key(&station.icon)
+                        && Path::new(&station.icon).exists()
+                    {
+                        if let Some(img) = load_image_from_path(Path::new(&station.icon)) {
+                            let tex = ctx.load_texture(
+                                format!("station_{}", station.icon),
+                                img,
+                                TextureOptions::LINEAR,
+                            );
+                            self.station_textures.insert(station.icon.clone(), tex);
+                        }
+                    }
+                }
+            }
+        }
+
         // If a scan just finished, reload the source data
         if !self.scanning.load(Ordering::SeqCst) {
             if let Some(source_idx) = self.scan_completed_source.take() {
@@ -1150,6 +1173,9 @@ impl eframe::App for Homeplayer {
         // Clone kids cover textures for rendering
         let kids_cover_textures = self.kids_cover_textures.clone();
 
+        // Clone station textures for rendering
+        let station_textures = self.station_textures.clone();
+
         // Clone file source state data for rendering
         let file_render_data: HashMap<usize, FileRenderData> = self
             .file_source_states
@@ -1286,7 +1312,12 @@ impl eframe::App for Homeplayer {
                                     }
                                 }
                                 ConfigSourceType::Stream => {
-                                    paint_stream_source(ui, source, &mut actions);
+                                    paint_stream_source(
+                                        ui,
+                                        source,
+                                        &station_textures,
+                                        &mut actions,
+                                    );
                                 }
                                 ConfigSourceType::KidsFile => {
                                     if let Some(data) = kids_file_render_data.get(source_idx) {
