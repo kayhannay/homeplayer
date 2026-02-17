@@ -17,7 +17,7 @@ use rodio_player::{PlayerState, RodioPlayer, SoundItem, TitleChanged};
 use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
-use crate::config::{AudioConfig, Config, ConfigSourceType};
+use crate::config::{AudioConfig, Config, ConfigSourceType, UiConfig};
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
     CdSourceState, FileRenderData, KidsFileRenderData, SettingsState, paint_cd_source,
@@ -40,6 +40,7 @@ fn main() -> eframe::Result<()> {
             Config {
                 sources: vec![],
                 audio: AudioConfig { start_volume: 50 },
+                ui: UiConfig::default(),
             }
         }
     };
@@ -75,7 +76,9 @@ fn main() -> eframe::Result<()> {
     for (i, _source) in config.sources.iter().enumerate() {
         pages.push(DynamicPage::Source(i));
     }
-    pages.push(DynamicPage::Settings);
+    if !config.ui.hide_settings {
+        pages.push(DynamicPage::Settings);
+    }
 
     let num_pages = pages.len();
 

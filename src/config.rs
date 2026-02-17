@@ -10,6 +10,8 @@ use tracing::{debug, error};
 pub struct Config {
     pub sources: Vec<Source>,
     pub audio: AudioConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -41,6 +43,21 @@ pub struct Station {
 #[allow(unused)]
 pub struct AudioConfig {
     pub start_volume: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[allow(unused)]
+pub struct UiConfig {
+    #[serde(default)]
+    pub hide_settings: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            hide_settings: false,
+        }
+    }
 }
 
 impl Config {
