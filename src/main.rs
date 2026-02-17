@@ -11,8 +11,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use anyhow;
-
 use eframe::{NativeOptions, egui};
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use rodio_player::{PlayerState, RodioPlayer, SoundItem, TitleChanged};
@@ -448,57 +446,17 @@ impl Homeplayer {
                 titles,
                 start_index,
             } => {
-                self.player.clear();
-                let sound_items: Vec<SoundItem> = titles
-                    .iter()
-                    .map(|t| SoundItem {
-                        artist: t.artist.clone(),
-                        album: t.album.clone(),
-                        title: t.name.clone(),
-                        path: t.path.clone(),
-                        cover: t.cover.clone(),
-                    })
-                    .collect();
-
-                // Skip to start_index by only appending from that index
-                let items_to_play: Vec<SoundItem> =
-                    sound_items.into_iter().skip(start_index).collect();
-                self.player.append(items_to_play);
-                if let Err(e) = self.player.play() {
-                    error!("Failed to start playback: {e}");
-                }
+                self.play_titles(titles, start_index);
             }
             UiAction::PlayStream { url, icon } => {
-                self.player.stop();
-                self.player.clear();
-                let mut player_clone = self.player.clone();
-                self.tokio_rt.spawn(async move {
-                    if let Err(e) = player_clone.play_stream(&url, &icon).await {
-                        error!("Failed to play stream: {e}");
-                    }
-                });
+                self.play_stream(url, icon);
             }
             UiAction::BrowseAlbums {
                 source_idx,
                 artist_id,
                 artist_name,
             } => {
-                if let Some(state) = self.file_source_states.get_mut(&source_idx)
-                    && let Some(source_id) = state.source_id
-                    && let Some(ref store) = self.music_store
-                {
-                    match store.get_albums_by_artist(source_id, artist_id) {
-                        Ok(albums) => {
-                            state.albums = albums;
-                            state.browse_mode = BrowseMode::ByAlbum;
-                            state.browse_level = BrowseLevel::Albums {
-                                artist_id,
-                                artist_name,
-                            };
-                        }
-                        Err(e) => error!("Failed to load albums: {e}"),
-                    }
-                }
+                self.browse_albums(source_idx, artist_id, artist_name);
             }
             UiAction::BrowseTitles {
                 source_idx,
@@ -507,162 +465,24 @@ impl Homeplayer {
                 album_id,
                 album_name,
             } => {
-                if let Some(state) = self.file_source_states.get_mut(&source_idx)
-                    && let Some(source_id) = state.source_id
-                    && let Some(ref store) = self.music_store
-                {
-                    match store.get_titles_by_artist_and_album(source_id, artist_id, album_id) {
-                        Ok(titles) => {
-                            state.titles = titles;
-                            state.browse_mode = BrowseMode::ByTitle;
-                            state.browse_level = BrowseLevel::Titles {
-                                artist_id,
-                                artist_name,
-                                album_id,
-                                album_name,
-                            };
-                        }
-                        Err(e) => error!("Failed to load titles: {e}"),
-                    }
-                }
+                self.browse_titles(source_idx, artist_id, artist_name, album_id, album_name);
             }
             UiAction::BrowseAlbumTitles {
                 source_idx,
                 album_id,
                 album_name,
             } => {
-                if let Some(state) = self.file_source_states.get_mut(&source_idx)
-                    && let Some(source_id) = state.source_id
-                    && let Some(ref store) = self.music_store
-                {
-                    match store.get_titles_by_album(source_id, album_id) {
-                        Ok(titles) => {
-                            state.titles = titles;
-                            state.browse_mode = BrowseMode::ByTitle;
-                            state.browse_level = BrowseLevel::TitlesForAlbum {
-                                album_id,
-                                album_name,
-                            };
-                        }
-                        Err(e) => error!("Failed to load titles for album: {e}"),
-                    }
-                }
+                self.browse_album_titles(source_idx, album_id, album_name);
             }
 
             UiAction::ScanSource { source_idx } => {
-                let source = &self.config.sources[source_idx];
-                if let Some(ref store) = self.music_store {
-                    let store = Arc::clone(store);
-                    let source_name = source.name.clone();
-                    let source_path = source.path.clone();
-                    let scanning = Arc::clone(&self.scanning);
-                    scanning.store(true, Ordering::SeqCst);
-                    self.scan_completed_source = None;
-                    let scan_source_idx = source_idx;
-                    std::thread::spawn(move || {
-                        info!("Starting scan of source '{source_name}' at '{source_path}'...");
-                        match store.update(&source_name, &source_path) {
-                            Ok(_) => info!("Scan of '{source_name}' completed successfully"),
-                            Err(e) => error!("Scan of '{source_name}' failed: {e}"),
-                        }
-                        scanning.store(false, Ordering::SeqCst);
-                    });
-                    self.scan_completed_source = Some(scan_source_idx);
-                }
+                self.scan_source(source_idx);
             }
             UiAction::SwitchBrowseMode { source_idx, mode } => {
-                if let Some(state) = self.file_source_states.get_mut(&source_idx)
-                    && let Some(source_id) = state.source_id
-                    && let Some(ref store) = self.music_store
-                {
-                    state.browse_mode = mode.clone();
-                    state.albums.clear();
-                    state.titles.clear();
-                    match mode {
-                        BrowseMode::ByArtist => {
-                            state.browse_level = BrowseLevel::Artists;
-                            if let Ok(artists) = store.get_artists(source_id) {
-                                state.artists = artists;
-                            }
-                        }
-                        BrowseMode::ByAlbum => {
-                            state.browse_level = BrowseLevel::AllAlbums;
-                            if let Ok(albums) = store.get_albums(source_id) {
-                                state.albums = albums;
-                            }
-                        }
-                        BrowseMode::ByTitle => {
-                            state.browse_level = BrowseLevel::AllTitles;
-                            if let Ok(titles) = store.get_titles(source_id) {
-                                state.titles = titles;
-                            }
-                        }
-                    }
-                }
+                self.switch_browse_mode(source_idx, mode);
             }
             UiAction::PlayerPlay => {
-                if self.is_paused {
-                    self.player.pause(); // toggles pause→play
-                } else if !self.is_playing {
-                    // Nothing playing – start playback depending on the
-                    // current page type (file source or CD source).
-                    let current_page = self.swipe_view.current_page();
-                    if let Some(DynamicPage::Source(source_idx)) = self.pages.get(current_page) {
-                        let source_idx = *source_idx;
-                        let source_type = &self.config.sources[source_idx].source_type;
-                        match source_type {
-                            ConfigSourceType::File => {
-                                if let Some(state) = self.file_source_states.get(&source_idx)
-                                    && let Some(source_id) = state.source_id
-                                    && let Some(ref store) = self.music_store
-                                {
-                                    let titles = match &state.browse_level {
-                                        BrowseLevel::Artists
-                                        | BrowseLevel::AllAlbums
-                                        | BrowseLevel::AllTitles => {
-                                            store.get_titles(source_id).ok()
-                                        }
-                                        BrowseLevel::Albums { artist_id, .. } => {
-                                            store.get_titles_by_artist(source_id, *artist_id).ok()
-                                        }
-                                        BrowseLevel::Titles {
-                                            artist_id,
-                                            album_id,
-                                            ..
-                                        } => store
-                                            .get_titles_by_artist_and_album(
-                                                source_id, *artist_id, *album_id,
-                                            )
-                                            .ok(),
-                                        BrowseLevel::TitlesForAlbum { album_id, .. } => {
-                                            store.get_titles_by_album(source_id, *album_id).ok()
-                                        }
-                                    };
-                                    if let Some(titles) = titles {
-                                        self.process_action(UiAction::PlayTitles {
-                                            titles,
-                                            start_index: 0,
-                                        });
-                                    }
-                                }
-                            }
-                            ConfigSourceType::CD => {
-                                // Play all audio tracks from the beginning
-                                if let Some(state) = self.cd_source_states.get(&source_idx) {
-                                    if !state.tracks.is_empty() {
-                                        self.process_action(UiAction::PlayCd {
-                                            source_idx,
-                                            start_track: 0,
-                                        });
-                                    }
-                                }
-                            }
-                            ConfigSourceType::Stream => {
-                                // Stream sources don't support generic "play all"
-                            }
-                        }
-                    }
-                }
+                self.play();
             }
             UiAction::PlayerPause => {
                 self.player.pause();
@@ -680,59 +500,281 @@ impl Homeplayer {
                 self.player.volume(vol);
             }
             UiAction::LoadCdToc { source_idx } => {
-                let source = &self.config.sources[source_idx];
-                let device = source.path.clone();
-                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
-                    state.loading = true;
-                    state.status = "Reading disc…".to_string();
-                    state.tracks.clear();
-                }
-                // Read the TOC synchronously on a background thread so the UI
-                // stays responsive.
-                let (toc_tx, toc_rx) = mpsc::channel();
-                std::thread::spawn(move || {
-                    let result = rodio_player::cd_audio::read_cd_toc(&device);
-                    let _ = toc_tx.send(result);
-                });
-                // We cannot block the UI thread, so we poll the result channel
-                // in drain_channels.  Store the receiver for later polling.
-                self.cd_toc_rx = Some((source_idx, toc_rx));
+                self.load_cd_toc(source_idx);
             }
             UiAction::PlayCd {
                 source_idx,
                 start_track,
             } => {
-                let source = &self.config.sources[source_idx];
-                let device = source.path.clone();
-                if let Some(state) = self.cd_source_states.get(&source_idx) {
-                    let tracks = state.tracks.clone();
-                    if let Err(e) = self.player.play_cd(&device, tracks, start_track) {
-                        error!("Failed to start CD playback: {e}");
-                    }
-                }
+                self.play_cd(source_idx, start_track);
             }
             UiAction::EjectCd { source_idx } => {
-                let source = &self.config.sources[source_idx];
-                let device = source.path.clone();
-                self.player.stop();
-                match rodio_player::cd_audio::eject_cd(&device) {
-                    Ok(_) => {
-                        info!("CD ejected");
-                        if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
-                            state.tracks.clear();
-                            state.disc_present = false;
-                            state.status =
-                                "Disc ejected. Insert a CD and press Refresh.".to_string();
+                self.eject_cd(source_idx);
+            }
+        }
+    }
+
+    fn eject_cd(&mut self, source_idx: usize) {
+        let source = &self.config.sources[source_idx];
+        let device = source.path.clone();
+        self.player.stop();
+        match rodio_player::cd_audio::eject_cd(&device) {
+            Ok(_) => {
+                info!("CD ejected");
+                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                    state.tracks.clear();
+                    state.disc_present = false;
+                    state.status = "Disc ejected. Insert a CD and press Refresh.".to_string();
+                }
+            }
+            Err(e) => {
+                error!("Failed to eject CD: {e}");
+                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                    state.status = format!("Eject failed: {e}");
+                }
+            }
+        }
+    }
+
+    fn play_cd(&mut self, source_idx: usize, start_track: usize) {
+        let source = &self.config.sources[source_idx];
+        let device = source.path.clone();
+        if let Some(state) = self.cd_source_states.get(&source_idx) {
+            let tracks = state.tracks.clone();
+            if let Err(e) = self.player.play_cd(&device, tracks, start_track) {
+                error!("Failed to start CD playback: {e}");
+            }
+        }
+    }
+
+    fn load_cd_toc(&mut self, source_idx: usize) {
+        let source = &self.config.sources[source_idx];
+        let device = source.path.clone();
+        if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+            state.loading = true;
+            state.status = "Reading disc…".to_string();
+            state.tracks.clear();
+        }
+        // Read the TOC synchronously on a background thread so the UI
+        // stays responsive.
+        let (toc_tx, toc_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = rodio_player::cd_audio::read_cd_toc(&device);
+            let _ = toc_tx.send(result);
+        });
+        // We cannot block the UI thread, so we poll the result channel
+        // in drain_channels.  Store the receiver for later polling.
+        self.cd_toc_rx = Some((source_idx, toc_rx));
+    }
+
+    fn play(&mut self) {
+        if self.is_paused {
+            self.player.pause(); // toggles pause→play
+        } else if !self.is_playing {
+            // Nothing playing – start playback depending on the
+            // current page type (file source or CD source).
+            let current_page = self.swipe_view.current_page();
+            if let Some(DynamicPage::Source(source_idx)) = self.pages.get(current_page) {
+                let source_idx = *source_idx;
+                let source_type = &self.config.sources[source_idx].source_type;
+                match source_type {
+                    ConfigSourceType::File => {
+                        if let Some(state) = self.file_source_states.get(&source_idx)
+                            && let Some(source_id) = state.source_id
+                            && let Some(ref store) = self.music_store
+                        {
+                            let titles = match &state.browse_level {
+                                BrowseLevel::Artists
+                                | BrowseLevel::AllAlbums
+                                | BrowseLevel::AllTitles => store.get_titles(source_id).ok(),
+                                BrowseLevel::Albums { artist_id, .. } => {
+                                    store.get_titles_by_artist(source_id, *artist_id).ok()
+                                }
+                                BrowseLevel::Titles {
+                                    artist_id,
+                                    album_id,
+                                    ..
+                                } => store
+                                    .get_titles_by_artist_and_album(
+                                        source_id, *artist_id, *album_id,
+                                    )
+                                    .ok(),
+                                BrowseLevel::TitlesForAlbum { album_id, .. } => {
+                                    store.get_titles_by_album(source_id, *album_id).ok()
+                                }
+                            };
+                            if let Some(titles) = titles {
+                                self.play_titles(titles, 0);
+                            }
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to eject CD: {e}");
-                        if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
-                            state.status = format!("Eject failed: {e}");
+                    ConfigSourceType::CD => {
+                        // Play all audio tracks from the beginning
+                        if let Some(state) = self.cd_source_states.get(&source_idx) {
+                            if !state.tracks.is_empty() {
+                                self.process_action(UiAction::PlayCd {
+                                    source_idx,
+                                    start_track: 0,
+                                });
+                            }
                         }
+                    }
+                    ConfigSourceType::Stream => {
+                        // Stream sources don't support generic "play all"
                     }
                 }
             }
+        }
+    }
+
+    fn switch_browse_mode(&mut self, source_idx: usize, mode: BrowseMode) {
+        if let Some(state) = self.file_source_states.get_mut(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            state.browse_mode = mode.clone();
+            state.albums.clear();
+            state.titles.clear();
+            match mode {
+                BrowseMode::ByArtist => {
+                    state.browse_level = BrowseLevel::Artists;
+                    if let Ok(artists) = store.get_artists(source_id) {
+                        state.artists = artists;
+                    }
+                }
+                BrowseMode::ByAlbum => {
+                    state.browse_level = BrowseLevel::AllAlbums;
+                    if let Ok(albums) = store.get_albums(source_id) {
+                        state.albums = albums;
+                    }
+                }
+                BrowseMode::ByTitle => {
+                    state.browse_level = BrowseLevel::AllTitles;
+                    if let Ok(titles) = store.get_titles(source_id) {
+                        state.titles = titles;
+                    }
+                }
+            }
+        }
+    }
+
+    fn scan_source(&mut self, source_idx: usize) {
+        let source = &self.config.sources[source_idx];
+        if let Some(ref store) = self.music_store {
+            let store = Arc::clone(store);
+            let source_name = source.name.clone();
+            let source_path = source.path.clone();
+            let scanning = Arc::clone(&self.scanning);
+            scanning.store(true, Ordering::SeqCst);
+            self.scan_completed_source = None;
+            let scan_source_idx = source_idx;
+            std::thread::spawn(move || {
+                info!("Starting scan of source '{source_name}' at '{source_path}'...");
+                match store.update(&source_name, &source_path) {
+                    Ok(_) => info!("Scan of '{source_name}' completed successfully"),
+                    Err(e) => error!("Scan of '{source_name}' failed: {e}"),
+                }
+                scanning.store(false, Ordering::SeqCst);
+            });
+            self.scan_completed_source = Some(scan_source_idx);
+        }
+    }
+
+    fn browse_album_titles(&mut self, source_idx: usize, album_id: i32, album_name: String) {
+        if let Some(state) = self.file_source_states.get_mut(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_album(source_id, album_id) {
+                Ok(titles) => {
+                    state.titles = titles;
+                    state.browse_mode = BrowseMode::ByTitle;
+                    state.browse_level = BrowseLevel::TitlesForAlbum {
+                        album_id,
+                        album_name,
+                    };
+                }
+                Err(e) => error!("Failed to load titles for album: {e}"),
+            }
+        }
+    }
+
+    fn browse_titles(
+        &mut self,
+        source_idx: usize,
+        artist_id: i32,
+        artist_name: String,
+        album_id: i32,
+        album_name: String,
+    ) {
+        if let Some(state) = self.file_source_states.get_mut(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_artist_and_album(source_id, artist_id, album_id) {
+                Ok(titles) => {
+                    state.titles = titles;
+                    state.browse_mode = BrowseMode::ByTitle;
+                    state.browse_level = BrowseLevel::Titles {
+                        artist_id,
+                        artist_name,
+                        album_id,
+                        album_name,
+                    };
+                }
+                Err(e) => error!("Failed to load titles: {e}"),
+            }
+        }
+    }
+
+    fn browse_albums(&mut self, source_idx: usize, artist_id: i32, artist_name: String) {
+        if let Some(state) = self.file_source_states.get_mut(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_albums_by_artist(source_id, artist_id) {
+                Ok(albums) => {
+                    state.albums = albums;
+                    state.browse_mode = BrowseMode::ByAlbum;
+                    state.browse_level = BrowseLevel::Albums {
+                        artist_id,
+                        artist_name,
+                    };
+                }
+                Err(e) => error!("Failed to load albums: {e}"),
+            }
+        }
+    }
+
+    fn play_stream(&mut self, url: String, icon: String) {
+        self.player.stop();
+        self.player.clear();
+        let mut player_clone = self.player.clone();
+        self.tokio_rt.spawn(async move {
+            if let Err(e) = player_clone.play_stream(&url, &icon).await {
+                error!("Failed to play stream: {e}");
+            }
+        });
+    }
+
+    fn play_titles(&mut self, titles: Vec<MusicTitleItem>, start_index: usize) {
+        self.player.clear();
+        let sound_items: Vec<SoundItem> = titles
+            .iter()
+            .map(|t| SoundItem {
+                artist: t.artist.clone(),
+                album: t.album.clone(),
+                title: t.name.clone(),
+                path: t.path.clone(),
+                cover: t.cover.clone(),
+            })
+            .collect();
+
+        // Skip to start_index by only appending from that index
+        let items_to_play: Vec<SoundItem> = sound_items.into_iter().skip(start_index).collect();
+        self.player.append(items_to_play);
+        if let Err(e) = self.player.play() {
+            error!("Failed to start playback: {e}");
         }
     }
 
