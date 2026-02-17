@@ -131,15 +131,43 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Homeplayer",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            // Bridge player channels through repaint-requesting threads.
+            // Whenever the player sends a title change or state update, these
+            // threads forward the message and wake up the UI so it processes
+            // the change immediately — even if no other interaction is happening.
+            let ctx = cc.egui_ctx.clone();
+            let (bridged_title_tx, bridged_title_rx) = mpsc::channel();
+            let ctx_for_titles = ctx.clone();
+            std::thread::Builder::new()
+                .name("title-bridge".into())
+                .spawn(move || {
+                    while let Ok(msg) = title_rx.recv() {
+                        let _ = bridged_title_tx.send(msg);
+                        ctx_for_titles.request_repaint();
+                    }
+                })
+                .expect("Failed to spawn title bridge thread");
+
+            let (bridged_button_tx, bridged_button_rx) = mpsc::channel();
+            std::thread::Builder::new()
+                .name("button-state-bridge".into())
+                .spawn(move || {
+                    while let Ok(msg) = button_rx.recv() {
+                        let _ = bridged_button_tx.send(msg);
+                        ctx.request_repaint();
+                    }
+                })
+                .expect("Failed to spawn button-state bridge thread");
+
             let settings_state = SettingsState::new(&config);
             Ok(Box::new(Homeplayer {
                 swipe_view: SwipeView::new(num_pages),
                 config,
                 player,
                 music_store,
-                title_rx,
-                button_state_rx: button_rx,
+                title_rx: bridged_title_rx,
+                button_state_rx: bridged_button_rx,
                 is_playing: false,
                 is_paused: false,
                 is_muted: false,
