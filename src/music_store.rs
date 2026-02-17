@@ -31,6 +31,14 @@ pub struct MusicTitleItem {
     pub album: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct KidsAlbumItem {
+    pub id: i32,
+    pub album_name: String,
+    pub artist_name: String,
+    pub cover: String,
+}
+
 #[derive(Debug)]
 pub struct NewMusicTitle {
     pub name: String,
@@ -251,6 +259,34 @@ impl MusicStore {
         let db_connection = self.db_connection.lock().expect("DB is locked");
         let mut stmt = db_connection.prepare("SELECT id FROM albums WHERE album=(?1)")?;
         stmt.query_row([album], |row| Ok(row.get(0)))?
+    }
+
+    pub fn get_albums_with_artist(&self, source: i32) -> Result<Vec<KidsAlbumItem>> {
+        let db_connection = self.db_connection.lock().expect("DB is locked");
+        let mut stmt = db_connection.prepare(
+            "SELECT albums.id, albums.album, artists.artist, covers.path \
+             FROM albums \
+             INNER JOIN artists ON albums.artist = artists.id \
+             INNER JOIN covers ON albums.cover = covers.id \
+             WHERE albums.source = (?1) \
+             ORDER BY albums.album",
+        )?;
+        let rows = stmt.query_map([source], |row| {
+            Ok(KidsAlbumItem {
+                id: row.get(0)?,
+                album_name: row.get(1)?,
+                artist_name: row.get(2)?,
+                cover: row.get(3)?,
+            })
+        })?;
+        let mut albums: Vec<KidsAlbumItem> = vec![];
+        for row in rows {
+            match row {
+                Ok(album) => albums.push(album),
+                Err(e) => error!("Error: {}", e),
+            }
+        }
+        Ok(albums)
     }
 
     pub fn get_albums_by_artist(&self, source: i32, artist_id: i32) -> Result<Vec<MusicItem>> {

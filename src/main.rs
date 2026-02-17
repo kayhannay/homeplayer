@@ -18,10 +18,11 @@ use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{AudioConfig, Config, ConfigSourceType};
-use crate::music_store::{MusicItem, MusicStore, MusicTitleItem};
+use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
-    CdSourceState, FileRenderData, paint_cd_source, paint_file_source, paint_now_playing,
-    paint_settings, paint_stream_source, source_type_icon,
+    CdSourceState, FileRenderData, KidsFileRenderData, paint_cd_source, paint_file_source,
+    paint_kids_file_source, paint_now_playing, paint_settings, paint_stream_source,
+    source_type_icon,
 };
 use crate::swipe_view::SwipeView;
 
@@ -95,6 +96,23 @@ fn main() -> eframe::Result<()> {
         }
     }
 
+    // Initialize KidsFile source states
+    let mut kids_file_source_states: HashMap<usize, KidsFileSourceState> = HashMap::new();
+    for (i, source) in config.sources.iter().enumerate() {
+        if matches!(source.source_type, ConfigSourceType::KidsFile) {
+            let mut state = KidsFileSourceState::new();
+            if let Some(ref store) = music_store
+                && let Ok(source_id) = store.get_source_id(&source.name)
+            {
+                state.source_id = Some(source_id);
+                if let Ok(albums) = store.get_albums_with_artist(source_id) {
+                    state.albums = albums;
+                }
+            }
+            kids_file_source_states.insert(i, state);
+        }
+    }
+
     // Initialize CD source states
     let mut cd_source_states: HashMap<usize, CdSourceState> = HashMap::new();
     for (i, source) in config.sources.iter().enumerate() {
@@ -129,6 +147,7 @@ fn main() -> eframe::Result<()> {
                 volume: initial_volume,
                 pages,
                 file_source_states,
+                kids_file_source_states,
                 cd_source_states,
                 cd_toc_rx: None,
                 tokio_rt,
@@ -137,6 +156,7 @@ fn main() -> eframe::Result<()> {
                 backgrounds: BackgroundImages::new(),
                 cover_texture: None,
                 cover_texture_path: String::new(),
+                kids_cover_textures: HashMap::new(),
             }))
         }),
     )
@@ -292,6 +312,20 @@ impl FileSourceState {
     }
 }
 
+pub(crate) struct KidsFileSourceState {
+    pub source_id: Option<i32>,
+    pub albums: Vec<KidsAlbumItem>,
+}
+
+impl KidsFileSourceState {
+    fn new() -> Self {
+        Self {
+            source_id: None,
+            albums: Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // UI actions collected during rendering
 // ---------------------------------------------------------------------------
@@ -340,6 +374,10 @@ pub(crate) enum UiAction {
     EjectCd {
         source_idx: usize,
     },
+    PlayKidsAlbum {
+        source_idx: usize,
+        album_id: i32,
+    },
     PlayerPlay,
     PlayerPause,
     PlayerStop,
@@ -365,6 +403,7 @@ struct Homeplayer {
     volume: f32,
     pages: Vec<DynamicPage>,
     file_source_states: HashMap<usize, FileSourceState>,
+    kids_file_source_states: HashMap<usize, KidsFileSourceState>,
     cd_source_states: HashMap<usize, CdSourceState>,
     cd_toc_rx: Option<(
         usize,
@@ -376,6 +415,7 @@ struct Homeplayer {
     backgrounds: BackgroundImages,
     cover_texture: Option<TextureHandle>,
     cover_texture_path: String,
+    kids_cover_textures: HashMap<String, TextureHandle>,
 }
 
 impl Homeplayer {
@@ -511,6 +551,12 @@ impl Homeplayer {
             UiAction::EjectCd { source_idx } => {
                 self.eject_cd(source_idx);
             }
+            UiAction::PlayKidsAlbum {
+                source_idx,
+                album_id,
+            } => {
+                self.play_kids_album(source_idx, album_id);
+            }
         }
     }
 
@@ -616,6 +662,17 @@ impl Homeplayer {
                                     source_idx,
                                     start_track: 0,
                                 });
+                            }
+                        }
+                    }
+                    ConfigSourceType::KidsFile => {
+                        // Kids view: play all titles from the source
+                        if let Some(state) = self.kids_file_source_states.get(&source_idx)
+                            && let Some(source_id) = state.source_id
+                            && let Some(ref store) = self.music_store
+                        {
+                            if let Ok(titles) = store.get_titles(source_id) {
+                                self.play_titles(titles, 0);
                             }
                         }
                     }
@@ -757,6 +814,20 @@ impl Homeplayer {
         });
     }
 
+    fn play_kids_album(&mut self, source_idx: usize, album_id: i32) {
+        if let Some(state) = self.kids_file_source_states.get(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_album(source_id, album_id) {
+                Ok(titles) => {
+                    self.play_titles(titles, 0);
+                }
+                Err(e) => error!("Failed to load titles for kids album: {e}"),
+            }
+        }
+    }
+
     fn play_titles(&mut self, titles: Vec<MusicTitleItem>, start_index: usize) {
         self.player.clear();
         let sound_items: Vec<SoundItem> = titles
@@ -781,6 +852,22 @@ impl Homeplayer {
     /// Reload data for a file source after a scan completes, respecting current browse mode.
     fn reload_file_source(&mut self, source_idx: usize) {
         let source = &self.config.sources[source_idx];
+
+        // Handle KidsFile sources
+        if matches!(source.source_type, ConfigSourceType::KidsFile) {
+            if let Some(ref store) = self.music_store
+                && let Some(state) = self.kids_file_source_states.get_mut(&source_idx)
+            {
+                if let Ok(source_id) = store.get_source_id(&source.name) {
+                    state.source_id = Some(source_id);
+                    if let Ok(albums) = store.get_albums_with_artist(source_id) {
+                        state.albums = albums;
+                    }
+                }
+            }
+            return;
+        }
+
         if let Some(ref store) = self.music_store
             && let Some(state) = self.file_source_states.get_mut(&source_idx)
         {
@@ -846,6 +933,25 @@ impl eframe::App for Homeplayer {
                 }
             } else {
                 self.cover_texture = None;
+            }
+        }
+
+        // Lazily load cover textures for KidsFile album covers
+        for state in self.kids_file_source_states.values() {
+            for album in &state.albums {
+                if !album.cover.is_empty()
+                    && !self.kids_cover_textures.contains_key(&album.cover)
+                    && Path::new(&album.cover).exists()
+                {
+                    if let Some(img) = load_image_from_path(Path::new(&album.cover)) {
+                        let tex = ctx.load_texture(
+                            format!("kids_cover_{}", album.cover),
+                            img,
+                            TextureOptions::LINEAR,
+                        );
+                        self.kids_cover_textures.insert(album.cover.clone(), tex);
+                    }
+                }
             }
         }
 
@@ -997,6 +1103,9 @@ impl eframe::App for Homeplayer {
         // Pre-extract cover texture reference to avoid borrow conflict with swipe_view
         let cover_texture = self.cover_texture.clone();
 
+        // Clone kids cover textures for rendering
+        let kids_cover_textures = self.kids_cover_textures.clone();
+
         // Clone file source state data for rendering
         let file_render_data: HashMap<usize, FileRenderData> = self
             .file_source_states
@@ -1015,6 +1124,21 @@ impl eframe::App for Homeplayer {
             })
             .collect();
 
+        // Clone KidsFile source state data for rendering
+        let kids_file_render_data: HashMap<usize, KidsFileRenderData> = self
+            .kids_file_source_states
+            .iter()
+            .map(|(k, v)| {
+                (
+                    *k,
+                    KidsFileRenderData {
+                        source_id: v.source_id,
+                        albums: v.albums.clone(),
+                    },
+                )
+            })
+            .collect();
+
         // Clone CD source states for rendering
         let cd_render_data: HashMap<usize, CdSourceState> = self.cd_source_states.clone();
 
@@ -1025,7 +1149,9 @@ impl eframe::App for Homeplayer {
                 DynamicPage::Source(idx) => {
                     let source = &config.sources[*idx];
                     match source.source_type {
-                        ConfigSourceType::File => self.backgrounds.music.as_ref().map(|t| t.id()),
+                        ConfigSourceType::File | ConfigSourceType::KidsFile => {
+                            self.backgrounds.music.as_ref().map(|t| t.id())
+                        }
                         ConfigSourceType::Stream => self.backgrounds.radio.as_ref().map(|t| t.id()),
                         ConfigSourceType::CD => self.backgrounds.cd.as_ref().map(|t| t.id()),
                     }
@@ -1042,7 +1168,7 @@ impl eframe::App for Homeplayer {
                 DynamicPage::Source(idx) => {
                     let source = &config.sources[*idx];
                     match source.source_type {
-                        ConfigSourceType::File => {
+                        ConfigSourceType::File | ConfigSourceType::KidsFile => {
                             self.backgrounds.music.as_ref().map(|t| t.size_vec2())
                         }
                         ConfigSourceType::Stream => {
@@ -1115,6 +1241,19 @@ impl eframe::App for Homeplayer {
                                 }
                                 ConfigSourceType::Stream => {
                                     paint_stream_source(ui, source, &mut actions);
+                                }
+                                ConfigSourceType::KidsFile => {
+                                    if let Some(data) = kids_file_render_data.get(source_idx) {
+                                        paint_kids_file_source(
+                                            ui,
+                                            source,
+                                            *source_idx,
+                                            data,
+                                            &kids_cover_textures,
+                                            is_scanning,
+                                            &mut actions,
+                                        );
+                                    }
                                 }
                                 ConfigSourceType::CD => {
                                     let cd_state = cd_render_data

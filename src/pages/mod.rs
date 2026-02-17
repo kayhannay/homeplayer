@@ -1,5 +1,6 @@
 pub mod cd_source;
 pub mod file_source;
+pub mod kids_file_source;
 pub mod now_playing;
 pub mod settings;
 pub mod stream_source;
@@ -9,6 +10,7 @@ use eframe::egui;
 
 pub use cd_source::{CdSourceState, paint_cd_source};
 pub use file_source::{FileRenderData, paint_file_source};
+pub use kids_file_source::{KidsFileRenderData, paint_kids_file_source};
 pub use now_playing::paint_now_playing;
 pub use settings::paint_settings;
 pub use stream_source::paint_stream_source;
@@ -18,6 +20,7 @@ pub fn source_type_icon(source_type: &ConfigSourceType) -> &'static str {
         ConfigSourceType::File => "📁",
         ConfigSourceType::Stream => "📻",
         ConfigSourceType::CD => "💿",
+        ConfigSourceType::KidsFile => "🧒",
     }
 }
 

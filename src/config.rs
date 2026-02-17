@@ -17,6 +17,7 @@ pub enum ConfigSourceType {
     File,
     Stream,
     CD,
+    KidsFile,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
