@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Write;
 
 use anyhow::anyhow;
@@ -12,7 +12,7 @@ pub struct Config {
     pub audio: AudioConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum ConfigSourceType {
     File,
     Stream,
@@ -58,14 +58,19 @@ impl Config {
 
     pub fn save(&self) -> Result<(), anyhow::Error> {
         let json = serde_json::to_string_pretty(self).unwrap();
-        let path = "/etc/homeplayer/config.json";
-        let file = match fs::exists(path) {
-            Ok(exists) => match exists {
-                true => File::open(path),
-                false => File::create(path),
-            },
-            Err(error) => Err(error),
+
+        // Try the system-wide path first, fall back to local config.json
+        let primary = "/etc/homeplayer/config.json";
+        let fallback = "config.json";
+
+        let (path, file) = match File::create(primary) {
+            Ok(f) => (primary, Ok(f)),
+            Err(e) => {
+                debug!("Cannot write to {primary} ({e}), falling back to {fallback}");
+                (fallback, File::create(fallback))
+            }
         };
+
         match file {
             Ok(mut config_file) => {
                 debug!("Saving settings to {path} ...");

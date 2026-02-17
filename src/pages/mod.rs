@@ -12,7 +12,7 @@ pub use cd_source::{CdSourceState, paint_cd_source};
 pub use file_source::{FileRenderData, paint_file_source};
 pub use kids_file_source::{KidsFileRenderData, paint_kids_file_source};
 pub use now_playing::paint_now_playing;
-pub use settings::paint_settings;
+pub use settings::{SettingsState, paint_settings};
 pub use stream_source::paint_stream_source;
 
 pub fn source_type_icon(source_type: &ConfigSourceType) -> &'static str {

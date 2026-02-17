@@ -20,9 +20,9 @@ use tracing::{debug, error, info, warn};
 use crate::config::{AudioConfig, Config, ConfigSourceType};
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
-    CdSourceState, FileRenderData, KidsFileRenderData, paint_cd_source, paint_file_source,
-    paint_kids_file_source, paint_now_playing, paint_settings, paint_stream_source,
-    source_type_icon,
+    CdSourceState, FileRenderData, KidsFileRenderData, SettingsState, paint_cd_source,
+    paint_file_source, paint_kids_file_source, paint_now_playing, paint_settings,
+    paint_stream_source, source_type_icon,
 };
 use crate::swipe_view::SwipeView;
 
@@ -129,6 +129,7 @@ fn main() -> eframe::Result<()> {
         "Homeplayer",
         options,
         Box::new(move |_cc| {
+            let settings_state = SettingsState::new(&config);
             Ok(Box::new(Homeplayer {
                 swipe_view: SwipeView::new(num_pages),
                 config,
@@ -157,6 +158,7 @@ fn main() -> eframe::Result<()> {
                 cover_texture: None,
                 cover_texture_path: String::new(),
                 kids_cover_textures: HashMap::new(),
+                settings_state,
             }))
         }),
     )
@@ -384,6 +386,10 @@ pub(crate) enum UiAction {
     PlayerNext,
     PlayerPrevious,
     PlayerVolume(f32),
+    SaveConfig {
+        config: Config,
+    },
+    ResetSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +422,7 @@ struct Homeplayer {
     cover_texture: Option<TextureHandle>,
     cover_texture_path: String,
     kids_cover_textures: HashMap<String, TextureHandle>,
+    settings_state: SettingsState,
 }
 
 impl Homeplayer {
@@ -556,6 +563,24 @@ impl Homeplayer {
                 album_id,
             } => {
                 self.play_kids_album(source_idx, album_id);
+            }
+            UiAction::SaveConfig { config } => match config.save() {
+                Ok(_) => {
+                    info!("Configuration saved successfully");
+                    self.config = config;
+                    self.settings_state.config = self.config.clone();
+                    self.settings_state.dirty = false;
+                    self.settings_state.save_message =
+                        Some(("✔ Configuration saved successfully.".to_string(), true));
+                }
+                Err(e) => {
+                    error!("Failed to save configuration: {e}");
+                    self.settings_state.save_message =
+                        Some((format!("✖ Failed to save: {e}"), false));
+                }
+            },
+            UiAction::ResetSettings => {
+                self.settings_state.reset(&self.config);
             }
         }
     }
@@ -1182,6 +1207,8 @@ impl eframe::App for Homeplayer {
             })
             .collect();
 
+        let settings_state = &mut self.settings_state;
+
         egui::CentralPanel::default().show(ctx, |ui| {
             self.swipe_view.show(
                 ui,
@@ -1281,7 +1308,7 @@ impl eframe::App for Homeplayer {
                             );
                         }
                         DynamicPage::Settings => {
-                            paint_settings(ui, &config);
+                            paint_settings(ui, settings_state, &mut actions);
                         }
                     }
                 },
