@@ -26,6 +26,10 @@ use stream_download::storage::memory::MemoryStorageProvider;
 use stream_download::{Settings, StreamDownload};
 use tracing::{debug, error, info};
 
+/// Placeholder string used when no meaningful value is available (e.g. unknown
+/// album or artist in stream metadata).
+const UNKNOWN: &str = "-";
+
 /// Data structure that is sent over the provided channel to inform
 /// about the audio title that is currently played.
 #[derive(Clone, Debug)]
@@ -66,12 +70,10 @@ pub struct RodioPlayer {
     _stream: Arc<OutputStream>,
     sound_queue: Arc<Mutex<Vec<SoundItem>>>,
     sound_queue_index: Arc<Mutex<usize>>,
-    mute_volume: f32,
+    mute_volume: Arc<Mutex<f32>>,
     title_changed_sender: Sender<TitleChanged>,
     button_state_sender: Sender<PlayerState>,
 }
-
-unsafe impl Send for RodioPlayer {}
 
 impl RodioPlayer {
     pub fn new(
@@ -87,18 +89,18 @@ impl RodioPlayer {
             _stream: Arc::new(stream),
             sound_queue: Arc::new(Mutex::new(Vec::new())),
             sound_queue_index: Arc::new(Mutex::new(0)),
-            mute_volume: 0.0,
+            mute_volume: Arc::new(Mutex::new(0.0)),
             title_changed_sender,
             button_state_sender,
         }
     }
 
-    pub fn append(&mut self, mut sound_items: Vec<SoundItem>) {
+    pub fn append(&self, mut sound_items: Vec<SoundItem>) {
         self.sound_queue.lock().unwrap().append(&mut sound_items);
     }
 
     pub fn play_cd(
-        &mut self,
+        &self,
         device: &str,
         tracks: Vec<cd_audio::CdTrackInfo>,
         start_index: usize,
@@ -113,7 +115,7 @@ impl RodioPlayer {
         let queue_index = Arc::clone(&self.sound_queue_index);
 
         let _ = spawn(move || {
-            match start_cd_playback(
+            if let Err(error) = start_cd_playback(
                 player_sink,
                 queue_index,
                 &device,
@@ -122,35 +124,33 @@ impl RodioPlayer {
                 title_changed_sender,
                 button_state_sender,
             ) {
-                Ok(_) => (),
-                Err(error) => error!("Could not start CD playback: {error}"),
-            };
+                error!("Could not start CD playback: {error}");
+            }
         });
         Ok(())
     }
 
-    pub fn play(&mut self) -> Result<(), Error> {
+    pub fn play(&self) -> Result<(), Error> {
         let player_sink = self.sink.clone();
         let player_queue = Arc::clone(&self.sound_queue);
         let queue_index = Arc::clone(&self.sound_queue_index);
         let title_changed_sender = self.title_changed_sender.clone();
         let button_state_sender = self.button_state_sender.clone();
         let _ = spawn(move || {
-            match start_playback_queue(
+            if let Err(error) = start_playback_queue(
                 player_sink,
                 player_queue,
                 queue_index,
                 title_changed_sender,
                 button_state_sender,
             ) {
-                Ok(_) => (),
-                Err(error) => error!("Could not start playback: {error}"),
-            };
+                error!("Could not start playback: {error}");
+            }
         });
         Ok(())
     }
 
-    pub async fn play_stream(&mut self, url: &str, icon: &str) -> Result<(), Error> {
+    pub async fn play_stream(&self, url: &str, icon: &str) -> Result<(), Error> {
         let client = Client::builder().request_icy_metadata().build()?;
         let stream = HttpStream::new(client, url.parse()?).await?;
 
@@ -158,10 +158,6 @@ impl RodioPlayer {
         let bitrate: u64 = stream.header("Icy-Br").unwrap_or("256").parse()?;
         debug!("bitrate={bitrate}");
 
-        //println!("Headers:");
-        // stream.headers().iter().for_each(|(k, v)| {
-        //     println!("{}={:?}", k, v);
-        // });
         let icy_headers = IcyHeaders::parse_from_headers(stream.headers());
 
         // buffer 5 seconds of audio
@@ -182,15 +178,15 @@ impl RodioPlayer {
         )
         .await?;
 
-        //let sender = title_changed_sender.unwrap().clone();
-
-        let _ = self._play_stream(reader, icy_headers, icon);
+        let _ = self.start_stream_playback(reader, icy_headers, icon);
 
         Ok(())
     }
 
-    fn _play_stream(
-        &mut self,
+    /// Set up the ICY metadata reader and spawn a thread that drives playback
+    /// of the given internet radio / audio stream.
+    fn start_stream_playback(
+        &self,
         reader: StreamDownload<BoundedStorageProvider<MemoryStorageProvider>>,
         icy_headers: IcyHeaders,
         icon: &str,
@@ -203,26 +199,28 @@ impl RodioPlayer {
             // Since we requested icy metadata, the metadata interval header should be present in the
             // response. This will allow us to parse the metadata within the stream
             icy_headers.metadata_interval(),
-            // Print the stream metadata whenever we receive new values
+            // Parse stream metadata whenever we receive new values.
             move |metadata| {
-                //println!("{metadata:#?}\n");
-
-                let mut stream_title = "-".to_string();
-                match metadata {
-                    Ok(meta) => {
-                        stream_title = meta.stream_title().unwrap().to_string();
-                    }
+                // ICY stream titles typically use the format "Artist - Title"
+                // and some stations append extra info after a single-quote
+                // (e.g. "Artist - Title'extra"). We split on "-" for
+                // artist/title and strip anything after "'" from the title.
+                let stream_title = match metadata {
+                    Ok(meta) => meta.stream_title().unwrap_or(UNKNOWN).to_string(),
                     Err(e) => {
                         error!("Could not get music title from stream: {}", e);
+                        UNKNOWN.to_string()
                     }
-                }
+                };
                 debug!("Update title: {}", &stream_title);
-                let (artist, title) = stream_title.split_once("-").unwrap_or((&stream_title, "-"));
+                let (artist, title) = stream_title
+                    .split_once("-")
+                    .unwrap_or((&stream_title, UNKNOWN));
                 let (normalized_title, _) = title.split_once("'").unwrap_or((title, ""));
                 let _ = title_changed_sender.send(TitleChanged {
                     title: normalized_title.trim().to_string(),
                     artist: artist.trim().to_string(),
-                    album: "-".to_string(),
+                    album: UNKNOWN.to_string(),
                     cover: icon.clone(),
                 });
             },
@@ -234,8 +232,6 @@ impl RodioPlayer {
             let _ = button_state_sender.send(PlayerState::Playing);
             let _ = button_state_sender.send(PlayerState::StartPlaying);
             let source = rodio::Decoder::new(stream_reader).unwrap();
-            //let duration = source.total_duration().unwrap();
-            //println!("Duration: {:?}", duration);
             player_sink.append(source);
             debug!("Start Play now ...");
             player_sink.play();
@@ -248,26 +244,27 @@ impl RodioPlayer {
     }
 
     pub fn stop(&self) {
-        *self.sound_queue_index.lock().unwrap() = self.sound_queue.lock().unwrap().len();
+        let queue = self.sound_queue.lock().unwrap();
+        let mut idx = self.sound_queue_index.lock().unwrap();
+        *idx = queue.len();
+        drop(idx);
+        drop(queue);
         self.sink.stop();
         let _ = self.button_state_sender.send(PlayerState::Stopped);
     }
 
     pub fn pause(&self) {
         debug!("Pause: {}", self.sink.is_paused());
-        match self.sink.is_paused() {
-            true => {
-                self.sink.play();
-                let _ = self.button_state_sender.send(PlayerState::Playing);
-            }
-            false => {
-                self.sink.pause();
-                let _ = self.button_state_sender.send(PlayerState::Paused);
-            }
+        if self.sink.is_paused() {
+            self.sink.play();
+            let _ = self.button_state_sender.send(PlayerState::Playing);
+        } else {
+            self.sink.pause();
+            let _ = self.button_state_sender.send(PlayerState::Paused);
         }
     }
 
-    pub fn volume(&self, volume: f32) {
+    pub fn set_volume(&self, volume: f32) {
         self.sink.set_volume(volume);
     }
 
@@ -275,14 +272,15 @@ impl RodioPlayer {
         self.sink.volume()
     }
 
-    pub fn mute(&mut self) {
+    pub fn mute(&self) {
+        let mut mute_vol = self.mute_volume.lock().unwrap();
         if self.sink.volume() != 0.0 {
-            self.mute_volume = self.sink.volume();
+            *mute_vol = self.sink.volume();
             self.sink.set_volume(0.0);
             let _ = self.button_state_sender.send(PlayerState::Muted);
         } else {
-            self.sink.set_volume(self.mute_volume);
-            self.mute_volume = 0.0;
+            self.sink.set_volume(*mute_vol);
+            *mute_vol = 0.0;
             let _ = self.button_state_sender.send(PlayerState::Unmuted);
         }
     }
@@ -298,9 +296,9 @@ impl RodioPlayer {
     }
 
     pub fn skip_previous(&self) {
-        if *self.sound_queue_index.lock().unwrap() > 0 {
-            *self.sound_queue_index.lock().unwrap() -= 2;
-        }
+        let mut idx = self.sound_queue_index.lock().unwrap();
+        *idx = idx.saturating_sub(2);
+        drop(idx);
         self.sink.stop();
     }
 
@@ -338,10 +336,18 @@ fn start_cd_playback(
 
     let audio_tracks: Vec<&cd_audio::CdTrackInfo> = tracks.iter().filter(|t| t.is_audio).collect();
 
-    while *queue_index.lock().unwrap() < audio_tracks.len() {
-        let idx = *queue_index.lock().unwrap();
+    loop {
+        let idx = {
+            let mut idx = queue_index.lock().unwrap();
+            let current = *idx;
+            if current >= audio_tracks.len() {
+                break;
+            }
+            *idx = current + 1;
+            current
+        };
+
         let track = audio_tracks[idx];
-        *queue_index.lock().unwrap() = idx + 1;
 
         info!(
             "Playing CD track {} (LBA {}–{})",
@@ -384,14 +390,21 @@ fn start_playback_queue(
     button_state_sender.send(PlayerState::Playing)?;
     button_state_sender.send(PlayerState::Seekable)?;
     button_state_sender.send(PlayerState::StartPlaying)?;
-    while player_queue.lock().unwrap().len() > *queue_index.lock().unwrap() {
-        let sound_item = player_queue
-            .lock()
-            .unwrap()
-            .get(*queue_index.lock().unwrap())
-            .unwrap()
-            .clone();
-        *queue_index.lock().unwrap() += 1;
+
+    loop {
+        // Lock both the queue and the index in one critical section to
+        // extract the next item (or break if we've reached the end).
+        let sound_item = {
+            let queue = player_queue.lock().unwrap();
+            let mut idx = queue_index.lock().unwrap();
+            if *idx >= queue.len() {
+                break;
+            }
+            let item = queue[*idx].clone();
+            *idx += 1;
+            item
+        };
+
         debug!("Change title: {}", &sound_item.title);
         let _ = title_changed_sender.send(TitleChanged {
             artist: sound_item.artist.clone(),
@@ -415,6 +428,7 @@ fn start_playback_queue(
         player_sink.sleep_until_end();
         debug!("Play finished ...");
     }
+
     button_state_sender.send(PlayerState::Stopped)?;
     button_state_sender.send(PlayerState::Unseekable)?;
     Ok(())

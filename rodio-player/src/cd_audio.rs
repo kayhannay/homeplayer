@@ -358,6 +358,8 @@ pub struct CdTrackSource {
     current_lba: i32,
     /// Past-the-end sector for this track.
     end_lba: i32,
+    /// Reusable byte buffer for raw sector reads (avoids per-call allocation).
+    raw_buf: Vec<u8>,
     /// Buffer of decoded i16 samples.
     buffer: Vec<i16>,
     /// Current read position within `buffer`.
@@ -379,10 +381,15 @@ impl CdTrackSource {
             "CdTrackSource: LBA {start_lba}–{end_lba} ({sector_count} sectors, {total_samples} samples)"
         );
 
+        // Pre-allocate the raw byte buffer for the maximum read size so
+        // `fill_buffer` never has to allocate on the heap.
+        let max_bytes = SECTORS_PER_READ as usize * SECTOR_SIZE;
+
         Ok(Self {
             file,
             current_lba: start_lba,
             end_lba,
+            raw_buf: vec![0u8; max_bytes],
             buffer: Vec::new(),
             buffer_pos: 0,
             total_samples,
@@ -401,9 +408,14 @@ impl CdTrackSource {
         let sectors_to_read = remaining_sectors.min(SECTORS_PER_READ);
 
         let byte_count = sectors_to_read as usize * SECTOR_SIZE;
-        let mut raw_buf: Vec<u8> = vec![0u8; byte_count];
+        self.raw_buf.resize(byte_count, 0u8);
 
-        match self.read_audio_sectors(self.current_lba, sectors_to_read, &mut raw_buf) {
+        match read_audio_sectors(
+            &self.file,
+            self.current_lba,
+            sectors_to_read,
+            &mut self.raw_buf[..byte_count],
+        ) {
             Ok(()) => {
                 self.current_lba += sectors_to_read;
 
@@ -411,7 +423,7 @@ impl CdTrackSource {
                 let sample_count = byte_count / 2;
                 self.buffer.clear();
                 self.buffer.reserve(sample_count);
-                for chunk in raw_buf.chunks_exact(2) {
+                for chunk in self.raw_buf[..byte_count].chunks_exact(2) {
                     let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
                     self.buffer.push(sample);
                 }
@@ -436,31 +448,31 @@ impl CdTrackSource {
             }
         }
     }
+}
 
-    /// Perform the `CDROMREADAUDIO` ioctl.
-    fn read_audio_sectors(
-        &self,
-        start_lba: i32,
-        nframes: i32,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
-        let mut read_cmd = CdromReadAudio {
-            addr_lba: start_lba,
-            addr_format: CDROM_LBA,
-            nframes,
-            buf: buf.as_mut_ptr(),
-        };
+/// Perform the `CDROMREADAUDIO` ioctl on the given CD device file.
+fn read_audio_sectors(
+    file: &File,
+    start_lba: i32,
+    nframes: i32,
+    buf: &mut [u8],
+) -> Result<(), Error> {
+    let mut read_cmd = CdromReadAudio {
+        addr_lba: start_lba,
+        addr_format: CDROM_LBA,
+        nframes,
+        buf: buf.as_mut_ptr(),
+    };
 
-        let fd = self.file.as_raw_fd();
-        let ret = unsafe { libc::ioctl(fd, CDROMREADAUDIO, &mut read_cmd as *mut CdromReadAudio) };
-        if ret < 0 {
-            return Err(anyhow!(
-                "CDROMREADAUDIO ioctl failed: {}",
-                io::Error::last_os_error()
-            ));
-        }
-        Ok(())
+    let fd = file.as_raw_fd();
+    let ret = unsafe { libc::ioctl(fd, CDROMREADAUDIO, &mut read_cmd as *mut CdromReadAudio) };
+    if ret < 0 {
+        return Err(anyhow!(
+            "CDROMREADAUDIO ioctl failed: {}",
+            io::Error::last_os_error()
+        ));
     }
+    Ok(())
 }
 
 impl Iterator for CdTrackSource {
@@ -519,7 +531,3 @@ impl rodio::Source for CdTrackSource {
         Some(Duration::from_secs_f64(secs))
     }
 }
-
-// CdTrackSource owns a File (which is Send) and plain data buffers,
-// so it is safe to send across threads.
-unsafe impl Send for CdTrackSource {}

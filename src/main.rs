@@ -68,7 +68,7 @@ fn main() -> eframe::Result<()> {
 
     // Create player
     let player = RodioPlayer::new(title_tx, button_tx);
-    player.volume(initial_volume);
+    player.set_volume(initial_volume);
 
     // Build dynamic pages
     let mut pages: Vec<DynamicPage> = Vec::new();
@@ -560,7 +560,7 @@ impl Homeplayer {
                 self.player.skip_previous();
             }
             UiAction::PlayerVolume(vol) => {
-                self.player.volume(vol);
+                self.player.set_volume(vol);
             }
             UiAction::LoadCdToc { source_idx } => {
                 self.load_cd_toc(source_idx);
@@ -849,7 +849,7 @@ impl Homeplayer {
     fn play_stream(&mut self, url: String, icon: String) {
         self.player.stop();
         self.player.clear();
-        let mut player_clone = self.player.clone();
+        let player_clone = self.player.clone();
         self.tokio_rt.spawn(async move {
             if let Err(e) = player_clone.play_stream(&url, &icon).await {
                 error!("Failed to play stream: {e}");
