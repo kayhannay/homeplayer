@@ -142,6 +142,7 @@ fn main() -> eframe::Result<()> {
                 button_state_rx: button_rx,
                 is_playing: false,
                 is_paused: false,
+                is_muted: false,
                 current_title: TitleChanged {
                     artist: String::new(),
                     album: String::new(),
@@ -390,6 +391,7 @@ pub(crate) enum UiAction {
     PlayerNext,
     PlayerPrevious,
     PlayerVolume(f32),
+    PlayerMute,
     SaveConfig {
         config: Config,
     },
@@ -409,6 +411,7 @@ struct Homeplayer {
     button_state_rx: Receiver<PlayerState>,
     is_playing: bool,
     is_paused: bool,
+    is_muted: bool,
     current_title: TitleChanged,
     volume: f32,
     pages: Vec<DynamicPage>,
@@ -497,7 +500,12 @@ impl Homeplayer {
                     self.is_playing = true;
                     self.is_paused = false;
                 }
-                PlayerState::Muted | PlayerState::Unmuted => {}
+                PlayerState::Muted => {
+                    self.is_muted = true;
+                }
+                PlayerState::Unmuted => {
+                    self.is_muted = false;
+                }
                 PlayerState::Seekable | PlayerState::Unseekable => {}
             }
         }
@@ -561,6 +569,10 @@ impl Homeplayer {
             }
             UiAction::PlayerVolume(vol) => {
                 self.player.set_volume(vol);
+                self.is_muted = false;
+            }
+            UiAction::PlayerMute => {
+                self.player.mute();
             }
             UiAction::LoadCdToc { source_idx } => {
                 self.load_cd_toc(source_idx);
@@ -1079,37 +1091,51 @@ impl eframe::App for Homeplayer {
                 ui.separator();
 
                 // Track info
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let status = if self.is_playing && !self.is_paused {
-                        "▶"
-                    } else if self.is_paused {
-                        "⏸"
-                    } else {
-                        "⏹"
-                    };
-
-                    let title_text = if self.current_title.artist.is_empty() {
-                        self.current_title.title.clone()
-                    } else {
-                        format!(
-                            "{} - {}",
-                            self.current_title.artist, self.current_title.title
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Volume controls on the right (laid out first so they claim space)
+                    ui.spacing_mut().slider_width = 150.0;
+                    let mute_icon = if self.is_muted { "🔇" } else { "🔊" };
+                    if ui
+                        .add_sized(
+                            egui::vec2(36.0, 36.0),
+                            egui::Button::new(egui::RichText::new(mute_icon).size(20.0)),
                         )
-                    };
+                        .clicked()
+                    {
+                        actions.push(UiAction::PlayerMute);
+                    }
+                    let mut vol = self.volume;
+                    let response = ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
+                    if response.changed() {
+                        self.volume = vol;
+                        actions.push(UiAction::PlayerVolume(vol));
+                    }
 
-                    ui.label(egui::RichText::new(format!("{} {}", status, title_text)).strong());
+                    // Title text in remaining space (left-to-right, truncated)
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let status = if self.is_playing && !self.is_paused {
+                            "▶"
+                        } else if self.is_paused {
+                            "⏸"
+                        } else {
+                            "⏹"
+                        };
 
-                    // Volume slider on the right
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().slider_width = 150.0;
-                        let mut vol = self.volume;
-                        let response =
-                            ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
-                        if response.changed() {
-                            self.volume = vol;
-                            actions.push(UiAction::PlayerVolume(vol));
-                        }
-                        ui.label("🔊");
+                        let title_text = if self.current_title.artist.is_empty() {
+                            self.current_title.title.clone()
+                        } else {
+                            format!(
+                                "{} - {}",
+                                self.current_title.artist, self.current_title.title
+                            )
+                        };
+
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!("{} {}", status, title_text)).strong(),
+                            )
+                            .truncate(),
+                        );
                     });
                 });
             });

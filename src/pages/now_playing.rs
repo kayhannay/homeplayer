@@ -77,11 +77,11 @@ pub fn paint_now_playing(
         // relative to the album art
         ui.vertical(|ui| {
             // Estimate text block height to center it within the art_size height
-            let title_height = 24.0; // approximate for size 20
+            let title_height = 34.0; // approximate for size 28
             let spacing = 4.0;
-            let artist_height = 18.0; // approximate for size 15
+            let artist_height = 26.0; // approximate for size 22
             let album_height = if !current_title.album.is_empty() && current_title.album != "-" {
-                18.0
+                22.0
             } else {
                 0.0
             };
@@ -95,7 +95,7 @@ pub fn paint_now_playing(
             } else {
                 &current_title.title
             };
-            ui.label(egui::RichText::new(title).strong().size(20.0));
+            ui.label(egui::RichText::new(title).strong().size(28.0));
             ui.add_space(4.0);
 
             let artist = if current_title.artist.is_empty() {
@@ -103,7 +103,7 @@ pub fn paint_now_playing(
             } else {
                 &current_title.artist
             };
-            ui.label(egui::RichText::new(artist).weak().size(15.0));
+            ui.label(egui::RichText::new(artist).weak().size(22.0));
 
             let album = if current_title.album.is_empty() || current_title.album == "-" {
                 ""
@@ -111,7 +111,7 @@ pub fn paint_now_playing(
                 &current_title.album
             };
             if !album.is_empty() {
-                ui.label(egui::RichText::new(album).weak().italics());
+                ui.label(egui::RichText::new(album).weak().italics().size(18.0));
             }
         });
     });
