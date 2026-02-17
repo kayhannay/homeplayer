@@ -426,6 +426,17 @@ struct Homeplayer {
 }
 
 impl Homeplayer {
+    /// Navigate the swipe view to the "Now Playing" page.
+    fn navigate_to_now_playing(&mut self) {
+        if let Some(idx) = self
+            .pages
+            .iter()
+            .position(|p| matches!(p, DynamicPage::NowPlaying))
+        {
+            self.swipe_view.set_page(idx);
+        }
+    }
+
     fn drain_channels(&mut self) {
         // Drain title changes
         while let Ok(title) = self.title_rx.try_recv() {
@@ -614,6 +625,8 @@ impl Homeplayer {
             let tracks = state.tracks.clone();
             if let Err(e) = self.player.play_cd(&device, tracks, start_track) {
                 error!("Failed to start CD playback: {e}");
+            } else {
+                self.navigate_to_now_playing();
             }
         }
     }
@@ -837,6 +850,7 @@ impl Homeplayer {
                 error!("Failed to play stream: {e}");
             }
         });
+        self.navigate_to_now_playing();
     }
 
     fn play_kids_album(&mut self, source_idx: usize, album_id: i32) {
@@ -871,6 +885,8 @@ impl Homeplayer {
         self.player.append(items_to_play);
         if let Err(e) = self.player.play() {
             error!("Failed to start playback: {e}");
+        } else {
+            self.navigate_to_now_playing();
         }
     }
 
