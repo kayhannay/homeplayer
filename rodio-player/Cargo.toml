@@ -6,11 +6,11 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
-icy-metadata = "0.4"
+icy-metadata = "0.6"
 libc = "0.2"
 rodio = { version = "0.21", default-features = false, features = [
     "symphonia-all",
     "playback",
 ] }
-stream-download = { version = "0.22", features = ["reqwest-rustls"] }
+stream-download = { version = "0.24", features = ["reqwest-rustls"] }
 tracing = "0.1"
