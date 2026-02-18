@@ -244,11 +244,9 @@ impl RodioPlayer {
     }
 
     pub fn stop(&self) {
-        let queue = self.sound_queue.lock().unwrap();
         let mut idx = self.sound_queue_index.lock().unwrap();
-        *idx = queue.len();
+        *idx = usize::MAX;
         drop(idx);
-        drop(queue);
         self.sink.stop();
         let _ = self.button_state_sender.send(PlayerState::Stopped);
     }
