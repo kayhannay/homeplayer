@@ -35,14 +35,20 @@ pub fn paint_kids_file_source(
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if is_scanning {
-                ui.label(egui::RichText::new("Scanning...").weak().italics());
+                ui.label(
+                    egui::RichText::new(egui_i18n::tr!("scanning"))
+                        .weak()
+                        .italics(),
+                );
                 ui.spinner();
             } else if ui
                 .add_sized(
                     egui::vec2(120.0, 48.0),
-                    egui::Button::new(egui::RichText::new("🔄 Scan").size(16.0)),
+                    egui::Button::new(
+                        egui::RichText::new(egui_i18n::tr!("scan_button")).size(16.0),
+                    ),
                 )
-                .on_hover_text("Scan music folder for changes")
+                .on_hover_text(egui_i18n::tr!("scan_hover"))
                 .clicked()
             {
                 actions.push(UiAction::ScanSource { source_idx });
@@ -56,13 +62,13 @@ pub fn paint_kids_file_source(
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("No music indexed yet")
+                egui::RichText::new(egui_i18n::tr!("no_music_indexed"))
                     .weak()
                     .size(16.0),
             );
             ui.add_space(8.0);
             ui.label(
-                egui::RichText::new("Click 'Scan' to index your music library.")
+                egui::RichText::new(egui_i18n::tr!("click_scan_hint"))
                     .weak()
                     .small(),
             );
@@ -73,10 +79,14 @@ pub fn paint_kids_file_source(
     if data.albums.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No albums found").weak().size(16.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("no_albums_found"))
+                    .weak()
+                    .size(16.0),
+            );
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Try scanning your music library.")
+                egui::RichText::new(egui_i18n::tr!("try_scanning_hint"))
                     .weak()
                     .small(),
             );
@@ -85,7 +95,7 @@ pub fn paint_kids_file_source(
     }
 
     ui.label(
-        egui::RichText::new(format!("{} albums", data.albums.len()))
+        egui::RichText::new(egui_i18n::tr!("n_albums", {count: data.albums.len()}))
             .weak()
             .small(),
     );

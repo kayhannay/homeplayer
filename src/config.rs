@@ -54,12 +54,19 @@ pub struct AudioConfig {
 pub struct UiConfig {
     #[serde(default)]
     pub hide_settings: bool,
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "en".to_string()
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
             hide_settings: false,
+            language: default_language(),
         }
     }
 }

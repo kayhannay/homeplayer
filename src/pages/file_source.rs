@@ -62,15 +62,27 @@ pub fn paint_file_source(
         if data.source_id.is_some() {
             let current_display = displayed_level(&data.browse_level);
 
-            let buttons: [(BrowseMode, &str, DisplayedLevel); 3] = [
-                (BrowseMode::ByArtist, "🎤 Artist", DisplayedLevel::Artists),
-                (BrowseMode::ByAlbum, "💿 Album", DisplayedLevel::Albums),
-                (BrowseMode::ByTitle, "🎵 Title", DisplayedLevel::Titles),
+            let buttons: [(BrowseMode, String, DisplayedLevel); 3] = [
+                (
+                    BrowseMode::ByArtist,
+                    egui_i18n::tr!("browse_artist"),
+                    DisplayedLevel::Artists,
+                ),
+                (
+                    BrowseMode::ByAlbum,
+                    egui_i18n::tr!("browse_album"),
+                    DisplayedLevel::Albums,
+                ),
+                (
+                    BrowseMode::ByTitle,
+                    egui_i18n::tr!("browse_title"),
+                    DisplayedLevel::Titles,
+                ),
             ];
 
             for (mode, label, level) in &buttons {
                 let is_selected = *level == current_display;
-                let text = egui::RichText::new(*label).size(15.0);
+                let text = egui::RichText::new(label.as_str()).size(15.0);
                 let text = if is_selected { text.strong() } else { text };
 
                 let button = egui::Button::new(text)
@@ -95,14 +107,20 @@ pub fn paint_file_source(
         // Scan button (right side)
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if is_scanning {
-                ui.label(egui::RichText::new("Scanning...").weak().italics());
+                ui.label(
+                    egui::RichText::new(egui_i18n::tr!("scanning"))
+                        .weak()
+                        .italics(),
+                );
                 ui.spinner();
             } else if ui
                 .add_sized(
                     egui::vec2(120.0, 48.0),
-                    egui::Button::new(egui::RichText::new("🔄 Scan").size(16.0)),
+                    egui::Button::new(
+                        egui::RichText::new(egui_i18n::tr!("scan_button")).size(16.0),
+                    ),
                 )
-                .on_hover_text("Scan music folder for changes")
+                .on_hover_text(egui_i18n::tr!("scan_hover"))
                 .clicked()
             {
                 actions.push(UiAction::ScanSource { source_idx });
@@ -121,13 +139,13 @@ pub fn paint_file_source(
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("No music indexed yet")
+                egui::RichText::new(egui_i18n::tr!("no_music_indexed"))
                     .weak()
                     .size(16.0),
             );
             ui.add_space(8.0);
             ui.label(
-                egui::RichText::new("Click 'Scan' to index your music library.")
+                egui::RichText::new(egui_i18n::tr!("click_scan_hint"))
                     .weak()
                     .small(),
             );
@@ -178,7 +196,7 @@ fn paint_breadcrumb(
                 // Clicking the artist name goes back to the artist list
                 if ui
                     .link(egui::RichText::new(artist_name).size(13.0).strong())
-                    .on_hover_text("Back to all artists")
+                    .on_hover_text(egui_i18n::tr!("back_to_all_artists"))
                     .clicked()
                 {
                     actions.push(UiAction::SwitchBrowseMode {
@@ -200,7 +218,7 @@ fn paint_breadcrumb(
                 ui.label(egui::RichText::new("🎤").size(13.0));
                 if ui
                     .link(egui::RichText::new(artist_name).size(13.0).strong())
-                    .on_hover_text("Back to all artists")
+                    .on_hover_text(egui_i18n::tr!("back_to_all_artists"))
                     .clicked()
                 {
                     actions.push(UiAction::SwitchBrowseMode {
@@ -219,7 +237,7 @@ fn paint_breadcrumb(
                 {
                     if ui
                         .link(egui::RichText::new(album_name).size(13.0).strong())
-                        .on_hover_text("Back to albums for this artist")
+                        .on_hover_text(egui_i18n::tr!("back_to_albums_for_artist"))
                         .clicked()
                     {
                         actions.push(UiAction::BrowseAlbums {
@@ -239,7 +257,7 @@ fn paint_breadcrumb(
                 ui.label(egui::RichText::new("💿").size(13.0));
                 if ui
                     .link(egui::RichText::new(album_name).size(13.0).strong())
-                    .on_hover_text("Back to all albums")
+                    .on_hover_text(egui_i18n::tr!("back_to_all_albums"))
                     .clicked()
                 {
                     actions.push(UiAction::SwitchBrowseMode {
@@ -266,17 +284,21 @@ fn paint_artist_list(
     if data.artists.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No artists found").weak().size(16.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("no_artists_found"))
+                    .weak()
+                    .size(16.0),
+            );
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Try scanning your music library.")
+                egui::RichText::new(egui_i18n::tr!("try_scanning_hint"))
                     .weak()
                     .small(),
             );
         });
     } else {
         ui.label(
-            egui::RichText::new(format!("{} artists", data.artists.len()))
+            egui::RichText::new(egui_i18n::tr!("n_artists", {count: data.artists.len()}))
                 .weak()
                 .small(),
         );
@@ -318,11 +340,15 @@ fn paint_album_list_artist_mode(
     if data.albums.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No albums found").weak().size(16.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("no_albums_found"))
+                    .weak()
+                    .size(16.0),
+            );
         });
     } else {
         ui.label(
-            egui::RichText::new(format!("{} albums", data.albums.len()))
+            egui::RichText::new(egui_i18n::tr!("n_albums", {count: data.albums.len()}))
                 .weak()
                 .small(),
         );
@@ -358,17 +384,21 @@ fn paint_album_list_album_mode(
     if data.albums.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No albums found").weak().size(16.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("no_albums_found"))
+                    .weak()
+                    .size(16.0),
+            );
             ui.add_space(4.0);
             ui.label(
-                egui::RichText::new("Try scanning your music library.")
+                egui::RichText::new(egui_i18n::tr!("try_scanning_hint"))
                     .weak()
                     .small(),
             );
         });
     } else {
         ui.label(
-            egui::RichText::new(format!("{} albums", data.albums.len()))
+            egui::RichText::new(egui_i18n::tr!("n_albums", {count: data.albums.len()}))
                 .weak()
                 .small(),
         );
@@ -397,11 +427,15 @@ fn paint_title_list(ui: &mut egui::Ui, data: &FileRenderData, actions: &mut Vec<
     if data.titles.is_empty() {
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("No titles found").weak().size(16.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("no_titles_found"))
+                    .weak()
+                    .size(16.0),
+            );
         });
     } else {
         ui.label(
-            egui::RichText::new(format!("{} titles", data.titles.len()))
+            egui::RichText::new(egui_i18n::tr!("n_titles", {count: data.titles.len()}))
                 .weak()
                 .small(),
         );

@@ -27,3 +27,4 @@ tokio = { version = "1.49", features = ["rt-multi-thread"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 rodio-player = { path = "rodio-player" }
+egui-i18n = { version = "0.1", features = ["classic"] }

@@ -26,6 +26,15 @@ use crate::pages::{
 };
 use crate::swipe_view::SwipeView;
 
+fn init_i18n(language: &str) {
+    let en = String::from_utf8_lossy(include_bytes!("../assets/languages/en.egl"));
+    let de = String::from_utf8_lossy(include_bytes!("../assets/languages/de.egl"));
+    egui_i18n::load_translations_from_text("en", en).unwrap();
+    egui_i18n::load_translations_from_text("de", de).unwrap();
+    egui_i18n::set_fallback("en");
+    egui_i18n::set_language(language);
+}
+
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt::init();
 
@@ -47,6 +56,8 @@ fn main() -> eframe::Result<()> {
             }
         }
     };
+
+    init_i18n(&config.ui.language);
 
     let initial_volume = (config.audio.start_volume.min(100) as f32) / 100.0;
 
@@ -291,8 +302,8 @@ fn page_label(page: &DynamicPage, config: &Config) -> String {
             let icon = source_type_icon(&source.source_type);
             format!("{} {}", icon, source.name)
         }
-        DynamicPage::NowPlaying => "🎵 Playing".to_string(),
-        DynamicPage::Settings => "⚙ Settings".to_string(),
+        DynamicPage::NowPlaying => egui_i18n::tr!("page_playing"),
+        DynamicPage::Settings => egui_i18n::tr!("page_settings"),
     }
 }
 
@@ -552,6 +563,9 @@ impl Homeplayer {
         self.player
             .switch_device(self.config.audio.device.as_deref());
 
+        // ── 1b. Language ───────────────────────────────────────────────
+        egui_i18n::set_language(&self.config.ui.language);
+
         // ── 2. Rebuild pages ───────────────────────────────────────────
         let mut pages: Vec<DynamicPage> = Vec::new();
         pages.push(DynamicPage::NowPlaying);
@@ -714,12 +728,14 @@ impl Homeplayer {
                     self.settings_state.config = self.config.clone();
                     self.settings_state.dirty = false;
                     self.settings_state.save_message =
-                        Some(("✔ Configuration saved and applied.".to_string(), true));
+                        Some((egui_i18n::tr!("config_saved_ok"), true));
                 }
                 Err(e) => {
                     error!("Failed to save configuration: {e}");
-                    self.settings_state.save_message =
-                        Some((format!("✖ Failed to save: {e}"), false));
+                    self.settings_state.save_message = Some((
+                        format!("{}: {e}", egui_i18n::tr!("config_save_failed")),
+                        false,
+                    ));
                 }
             },
             UiAction::ResetSettings => {

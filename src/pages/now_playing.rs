@@ -90,20 +90,20 @@ pub fn paint_now_playing(
 
             ui.add_space(text_top_padding);
 
-            let title = if current_title.title.is_empty() {
-                "No track selected"
+            let title_text = if current_title.title.is_empty() {
+                egui_i18n::tr!("no_track_selected")
             } else {
-                &current_title.title
+                current_title.title.clone()
             };
-            ui.label(egui::RichText::new(title).strong().size(28.0));
+            ui.label(egui::RichText::new(title_text).strong().size(28.0));
             ui.add_space(4.0);
 
-            let artist = if current_title.artist.is_empty() {
-                "Unknown Artist"
+            let artist_text = if current_title.artist.is_empty() {
+                egui_i18n::tr!("unknown_artist")
             } else {
-                &current_title.artist
+                current_title.artist.clone()
             };
-            ui.label(egui::RichText::new(artist).weak().size(22.0));
+            ui.label(egui::RichText::new(artist_text).weak().size(22.0));
 
             let album = if current_title.album.is_empty() || current_title.album == "-" {
                 ""

@@ -23,7 +23,7 @@ impl CdSourceState {
         Self {
             tracks: Vec::new(),
             loading: false,
-            status: "Insert a CD and press Refresh.".to_string(),
+            status: String::new(),
             disc_present: false,
         }
     }
@@ -43,7 +43,11 @@ pub fn paint_cd_source(
     ui.horizontal(|ui| {
         if state.loading {
             ui.spinner();
-            ui.label(egui::RichText::new("Reading disc…").weak().italics());
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("reading_disc"))
+                    .weak()
+                    .italics(),
+            );
         } else {
             // Disc summary on the left
             if !state.tracks.is_empty() {
@@ -56,23 +60,29 @@ pub fn paint_cd_source(
                 let total_secs = total_duration.as_secs() % 60;
 
                 ui.vertical(|ui| {
+                    let duration_str = format!("{}:{:02}", total_mins, total_secs);
+                    let track_key = if audio_tracks.len() == 1 {
+                        "audio_tracks_one"
+                    } else {
+                        "audio_tracks_other"
+                    };
                     ui.label(
-                        egui::RichText::new(format!(
-                            "💿  {} audio track{}  •  {}:{:02}",
-                            audio_tracks.len(),
-                            if audio_tracks.len() == 1 { "" } else { "s" },
-                            total_mins,
-                            total_secs,
-                        ))
+                        egui::RichText::new(egui_i18n::tr!(track_key, {
+                            count: audio_tracks.len(),
+                            duration: &duration_str
+                        }))
                         .size(14.0),
                     );
                     if data_tracks > 0 {
+                        let data_key = if data_tracks == 1 {
+                            "data_tracks_one"
+                        } else {
+                            "data_tracks_other"
+                        };
                         ui.label(
-                            egui::RichText::new(format!(
-                                "     {} data track{}",
-                                data_tracks,
-                                if data_tracks == 1 { "" } else { "s" },
-                            ))
+                            egui::RichText::new(egui_i18n::tr!(data_key, {
+                                count: data_tracks
+                            }))
                             .size(12.0)
                             .weak(),
                         );
@@ -85,9 +95,11 @@ pub fn paint_cd_source(
                 if ui
                     .add_sized(
                         action_button_size,
-                        egui::Button::new(egui::RichText::new("⏏ Eject").size(16.0)),
+                        egui::Button::new(
+                            egui::RichText::new(egui_i18n::tr!("eject_button")).size(16.0),
+                        ),
                     )
-                    .on_hover_text("Eject the CD tray")
+                    .on_hover_text(egui_i18n::tr!("eject_hover"))
                     .clicked()
                 {
                     actions.push(UiAction::EjectCd { source_idx });
@@ -95,9 +107,11 @@ pub fn paint_cd_source(
                 if ui
                     .add_sized(
                         action_button_size,
-                        egui::Button::new(egui::RichText::new("🔄 Refresh").size(16.0)),
+                        egui::Button::new(
+                            egui::RichText::new(egui_i18n::tr!("refresh_button")).size(16.0),
+                        ),
                     )
-                    .on_hover_text("Read the CD table of contents")
+                    .on_hover_text(egui_i18n::tr!("refresh_cd_hover"))
                     .clicked()
                 {
                     actions.push(UiAction::LoadCdToc { source_idx });
@@ -110,11 +124,16 @@ pub fn paint_cd_source(
 
     // Status message when there are no tracks
     if state.tracks.is_empty() {
+        let status_text = if state.status.is_empty() {
+            egui_i18n::tr!("insert_cd_hint")
+        } else {
+            state.status.clone()
+        };
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             ui.label(egui::RichText::new("💿").size(64.0));
             ui.add_space(16.0);
-            ui.label(egui::RichText::new(&state.status).weak().size(14.0));
+            ui.label(egui::RichText::new(&status_text).weak().size(14.0));
         });
         return;
     }
@@ -128,8 +147,10 @@ pub fn paint_cd_source(
             ui.add(
                 egui::Button::new(
                     egui::RichText::new(format!(
-                        "  {}   Track {:02}   [data track]",
-                        "💾", track.number
+                        "  {}   Track {:02}   {}",
+                        "💾",
+                        track.number,
+                        egui_i18n::tr!("data_track_label")
                     ))
                     .weak()
                     .size(16.0),
@@ -170,10 +191,9 @@ pub fn paint_cd_source(
             });
         }
 
-        response.on_hover_text(format!(
-            "Play from track {} ({} sectors)",
-            track.number,
-            track.sector_count()
-        ));
+        response.on_hover_text(egui_i18n::tr!("play_from_track_hover", {
+            number: track.number,
+            sectors: track.sector_count()
+        }));
     }
 }

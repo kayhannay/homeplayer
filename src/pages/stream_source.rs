@@ -18,13 +18,13 @@ pub fn paint_stream_source(
         ui.add_space(20.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                egui::RichText::new("No stations configured")
+                egui::RichText::new(egui_i18n::tr!("no_stations_configured"))
                     .weak()
                     .size(16.0),
             );
             ui.add_space(8.0);
             ui.label(
-                egui::RichText::new("Add stations in the config file.")
+                egui::RichText::new(egui_i18n::tr!("add_stations_hint"))
                     .weak()
                     .small(),
             );
@@ -33,7 +33,7 @@ pub fn paint_stream_source(
     }
 
     ui.label(
-        egui::RichText::new(format!("{} stations", source.stations.len()))
+        egui::RichText::new(egui_i18n::tr!("n_stations", {count: source.stations.len()}))
             .weak()
             .small(),
     );

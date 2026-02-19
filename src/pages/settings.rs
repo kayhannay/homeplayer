@@ -74,12 +74,12 @@ impl SettingsState {
     }
 }
 
-fn source_type_label(source_type: &ConfigSourceType) -> &'static str {
+fn source_type_label(source_type: &ConfigSourceType) -> String {
     match source_type {
-        ConfigSourceType::File => "File",
-        ConfigSourceType::Stream => "Stream",
-        ConfigSourceType::CD => "CD",
-        ConfigSourceType::KidsFile => "KidsFile",
+        ConfigSourceType::File => egui_i18n::tr!("source_type_file"),
+        ConfigSourceType::Stream => egui_i18n::tr!("source_type_stream"),
+        ConfigSourceType::CD => egui_i18n::tr!("source_type_cd"),
+        ConfigSourceType::KidsFile => egui_i18n::tr!("source_type_kidsfile"),
     }
 }
 
@@ -95,11 +95,41 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
     // ── Appearance ──────────────────────────────────────────────────────
     semi_transparent_group_frame(ui).show(ui, |ui| {
-        ui.label(egui::RichText::new("Appearance").strong().size(15.0));
+        ui.label(
+            egui::RichText::new(egui_i18n::tr!("settings_appearance"))
+                .strong()
+                .size(15.0),
+        );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label("Theme:");
+            ui.label(egui_i18n::tr!("settings_theme"));
             egui::widgets::global_theme_preference_buttons(ui);
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui_i18n::tr!("settings_language"));
+            let languages = [("en", "English"), ("de", "Deutsch")];
+            let current_label = languages
+                .iter()
+                .find(|(code, _)| *code == state.config.ui.language)
+                .map(|(_, label)| *label)
+                .unwrap_or("English");
+            egui::ComboBox::from_id_salt("ui_language")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for (code, label) in &languages {
+                        if ui
+                            .selectable_label(state.config.ui.language == *code, *label)
+                            .clicked()
+                            && state.config.ui.language != *code
+                        {
+                            state.config.ui.language = code.to_string();
+                            egui_i18n::set_language(code);
+                            state.dirty = true;
+                            state.save_message = None;
+                        }
+                    }
+                });
         });
     });
 
@@ -107,10 +137,14 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
     // ── Audio ───────────────────────────────────────────────────────────
     semi_transparent_group_frame(ui).show(ui, |ui| {
-        ui.label(egui::RichText::new("Audio").strong().size(15.0));
+        ui.label(
+            egui::RichText::new(egui_i18n::tr!("settings_audio"))
+                .strong()
+                .size(15.0),
+        );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label("Start volume:");
+            ui.label(egui_i18n::tr!("settings_start_volume"));
             let mut vol = state.config.audio.start_volume as i32;
             let slider = egui::Slider::new(&mut vol, 0..=100).suffix("%");
             if ui.add(slider).changed() {
@@ -121,7 +155,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label("Output device:");
+            ui.label(egui_i18n::tr!("settings_output_device"));
             let current = state.config.audio.device.as_deref().unwrap_or("Default");
             egui::ComboBox::from_id_salt("audio_device")
                 .selected_text(current)
@@ -152,9 +186,13 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
     // ── Sources ─────────────────────────────────────────────────────────
     semi_transparent_group_frame(ui).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Sources").strong().size(15.0));
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("settings_sources"))
+                    .strong()
+                    .size(15.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("➕ Add Source").clicked() {
+                if ui.button(egui_i18n::tr!("add_source_button")).clicked() {
                     state.adding_source = true;
                     state.new_source_name.clear();
                     state.new_source_path.clear();
@@ -165,7 +203,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
         ui.add_space(4.0);
 
         if state.config.sources.is_empty() {
-            ui.label(egui::RichText::new("No sources configured").weak());
+            ui.label(egui::RichText::new(egui_i18n::tr!("no_sources_configured")).weak());
         }
 
         // We need indices for removal; iterate by index.
@@ -202,21 +240,21 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                     // Remove button with confirmation
                     if state.confirm_remove_source == Some(i) {
                         ui.label(
-                            egui::RichText::new("Remove?")
+                            egui::RichText::new(egui_i18n::tr!("confirm_remove"))
                                 .color(egui::Color32::from_rgb(255, 100, 100)),
                         );
-                        if ui.button("Yes").clicked() {
+                        if ui.button(egui_i18n::tr!("yes")).clicked() {
                             source_to_remove = Some(i);
                             state.confirm_remove_source = None;
                         }
-                        if ui.button("No").clicked() {
+                        if ui.button(egui_i18n::tr!("no")).clicked() {
                             state.confirm_remove_source = None;
                         }
                     } else if ui
                         .button(
                             egui::RichText::new("🗑").color(egui::Color32::from_rgb(255, 100, 100)),
                         )
-                        .on_hover_text("Remove source")
+                        .on_hover_text(egui_i18n::tr!("remove_source_hover"))
                         .clicked()
                     {
                         state.confirm_remove_source = Some(i);
@@ -224,7 +262,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
                     // Move down
                     if i < num_sources - 1 {
-                        if ui.button("⬇").on_hover_text("Move down").clicked() {
+                        if ui
+                            .button("⬇")
+                            .on_hover_text(egui_i18n::tr!("move_down_hover"))
+                            .clicked()
+                        {
                             state.config.sources.swap(i, i + 1);
                             state.dirty = true;
                             state.save_message = None;
@@ -237,7 +279,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                     }
                     // Move up
                     if i > 0 {
-                        if ui.button("⬆").on_hover_text("Move up").clicked() {
+                        if ui
+                            .button("⬆")
+                            .on_hover_text(egui_i18n::tr!("move_up_hover"))
+                            .clicked()
+                        {
                             state.config.sources.swap(i, i - 1);
                             state.dirty = true;
                             state.save_message = None;
@@ -258,7 +304,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
                     // Source type
                     ui.horizontal(|ui| {
-                        ui.label("Type:");
+                        ui.label(egui_i18n::tr!("source_type_label"));
                         let current_label = source_type_label(&state.config.sources[i].source_type);
                         egui::ComboBox::from_id_salt(format!("source_type_{}", i))
                             .selected_text(current_label)
@@ -284,7 +330,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
                     // Source name
                     ui.horizontal(|ui| {
-                        ui.label("Name:");
+                        ui.label(egui_i18n::tr!("source_name_label"));
                         if ui
                             .text_edit_singleline(&mut state.config.sources[i].name)
                             .changed()
@@ -298,7 +344,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
                     // Source path (not relevant for Stream type, but still editable)
                     ui.horizontal(|ui| {
-                        ui.label("Path:");
+                        ui.label(egui_i18n::tr!("source_path_label"));
                         if ui
                             .text_edit_singleline(&mut state.config.sources[i].path)
                             .changed()
@@ -339,11 +385,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("New Source").strong());
+            ui.label(egui::RichText::new(egui_i18n::tr!("new_source")).strong());
             ui.add_space(2.0);
 
             ui.horizontal(|ui| {
-                ui.label("Type:");
+                ui.label(egui_i18n::tr!("source_type_label"));
                 egui::ComboBox::from_id_salt("new_source_type")
                     .selected_text(source_type_label(&state.new_source_type))
                     .show_ui(ui, |ui| {
@@ -358,12 +404,12 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
             });
 
             ui.horizontal(|ui| {
-                ui.label("Name:");
+                ui.label(egui_i18n::tr!("source_name_label"));
                 ui.text_edit_singleline(&mut state.new_source_name);
             });
 
             ui.horizontal(|ui| {
-                ui.label("Path:");
+                ui.label(egui_i18n::tr!("source_path_label"));
                 ui.text_edit_singleline(&mut state.new_source_path);
             });
 
@@ -371,7 +417,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
             ui.horizontal(|ui| {
                 let name_ok = !state.new_source_name.trim().is_empty();
                 if ui
-                    .add_enabled(name_ok, egui::Button::new("✔ Add"))
+                    .add_enabled(name_ok, egui::Button::new(egui_i18n::tr!("add_button")))
                     .clicked()
                 {
                     state.config.sources.push(Source {
@@ -387,7 +433,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                     state.new_source_path.clear();
                     state.new_source_type = ConfigSourceType::File;
                 }
-                if ui.button("✖ Cancel").clicked() {
+                if ui.button(egui_i18n::tr!("cancel_button")).clicked() {
                     state.adding_source = false;
                 }
             });
@@ -400,8 +446,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
     semi_transparent_group_frame(ui).show(ui, |ui| {
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(state.dirty, egui::Button::new("💾 Save"))
-                .on_hover_text("Save configuration and apply changes immediately")
+                .add_enabled(
+                    state.dirty,
+                    egui::Button::new(egui_i18n::tr!("save_button")),
+                )
+                .on_hover_text(egui_i18n::tr!("save_hover"))
                 .clicked()
             {
                 actions.push(UiAction::SaveConfig {
@@ -410,8 +459,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
             }
 
             if ui
-                .add_enabled(state.dirty, egui::Button::new("↩ Reset"))
-                .on_hover_text("Discard changes and revert to saved configuration")
+                .add_enabled(
+                    state.dirty,
+                    egui::Button::new(egui_i18n::tr!("reset_button")),
+                )
+                .on_hover_text(egui_i18n::tr!("reset_hover"))
                 .clicked()
             {
                 actions.push(UiAction::ResetSettings);
@@ -419,7 +471,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
             if state.dirty {
                 ui.label(
-                    egui::RichText::new("  ● unsaved changes")
+                    egui::RichText::new(egui_i18n::tr!("unsaved_changes"))
                         .color(egui::Color32::from_rgb(255, 200, 50))
                         .small(),
                 );
@@ -442,10 +494,14 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
 
     // ── About ───────────────────────────────────────────────────────────
     semi_transparent_group_frame(ui).show(ui, |ui| {
-        ui.label(egui::RichText::new("About").strong().size(15.0));
+        ui.label(
+            egui::RichText::new(egui_i18n::tr!("settings_about"))
+                .strong()
+                .size(15.0),
+        );
         ui.add_space(4.0);
         ui.label("Homeplayer v0.1.0");
-        ui.label(egui::RichText::new("Built with egui & rodio").weak());
+        ui.label(egui::RichText::new(egui_i18n::tr!("about_built_with")).weak());
     });
 
     ui.add_space(40.0);
@@ -457,12 +513,15 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
 
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!("Stations ({})", stations_len))
+            egui::RichText::new(egui_i18n::tr!("stations_header", {count: stations_len}))
                 .strong()
                 .size(13.0),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("➕ Add Station").clicked() {
+            if ui
+                .small_button(egui_i18n::tr!("add_station_button"))
+                .clicked()
+            {
                 state.adding_station_for = Some(source_idx);
                 state.new_station_name.clear();
                 state.new_station_url.clear();
@@ -482,22 +541,22 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                     // Remove station
                     if state.confirm_remove_station == Some((source_idx, j)) {
                         ui.label(
-                            egui::RichText::new("Remove?")
+                            egui::RichText::new(egui_i18n::tr!("confirm_remove"))
                                 .color(egui::Color32::from_rgb(255, 100, 100))
                                 .small(),
                         );
-                        if ui.small_button("Yes").clicked() {
+                        if ui.small_button(egui_i18n::tr!("yes")).clicked() {
                             station_to_remove = Some(j);
                             state.confirm_remove_station = None;
                         }
-                        if ui.small_button("No").clicked() {
+                        if ui.small_button(egui_i18n::tr!("no")).clicked() {
                             state.confirm_remove_station = None;
                         }
                     } else if ui
                         .small_button(
                             egui::RichText::new("🗑").color(egui::Color32::from_rgb(255, 100, 100)),
                         )
-                        .on_hover_text("Remove station")
+                        .on_hover_text(egui_i18n::tr!("remove_station_hover"))
                         .clicked()
                     {
                         state.confirm_remove_station = Some((source_idx, j));
@@ -505,7 +564,11 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
 
                     // Move down
                     if j < stations_len - 1 {
-                        if ui.small_button("⬇").on_hover_text("Move down").clicked() {
+                        if ui
+                            .small_button("⬇")
+                            .on_hover_text(egui_i18n::tr!("move_down_hover"))
+                            .clicked()
+                        {
                             state.config.sources[source_idx].stations.swap(j, j + 1);
                             state.dirty = true;
                             state.save_message = None;
@@ -513,7 +576,11 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                     }
                     // Move up
                     if j > 0 {
-                        if ui.small_button("⬆").on_hover_text("Move up").clicked() {
+                        if ui
+                            .small_button("⬆")
+                            .on_hover_text(egui_i18n::tr!("move_up_hover"))
+                            .clicked()
+                        {
                             state.config.sources[source_idx].stations.swap(j, j - 1);
                             state.dirty = true;
                             state.save_message = None;
@@ -526,7 +593,7 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                 .num_columns(2)
                 .spacing([8.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label("Name:");
+                    ui.label(egui_i18n::tr!("station_name_label"));
                     if ui
                         .add(
                             egui::TextEdit::singleline(
@@ -541,7 +608,7 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                     }
                     ui.end_row();
 
-                    ui.label("URL:");
+                    ui.label(egui_i18n::tr!("station_url_label"));
                     if ui
                         .add(
                             egui::TextEdit::singleline(
@@ -556,7 +623,7 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                     }
                     ui.end_row();
 
-                    ui.label("Icon:");
+                    ui.label(egui_i18n::tr!("station_icon_label"));
                     if ui
                         .add(
                             egui::TextEdit::singleline(
@@ -585,27 +652,31 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
     if state.adding_station_for == Some(source_idx) {
         ui.add_space(4.0);
         ui.group(|ui| {
-            ui.label(egui::RichText::new("New Station").strong().small());
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("new_station"))
+                    .strong()
+                    .small(),
+            );
 
             egui::Grid::new(format!("new_station_grid_{}", source_idx))
                 .num_columns(2)
                 .spacing([8.0, 4.0])
                 .show(ui, |ui| {
-                    ui.label("Name:");
+                    ui.label(egui_i18n::tr!("station_name_label"));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.new_station_name)
                             .desired_width(ui.available_width() - 8.0),
                     );
                     ui.end_row();
 
-                    ui.label("URL:");
+                    ui.label(egui_i18n::tr!("station_url_label"));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.new_station_url)
                             .desired_width(ui.available_width() - 8.0),
                     );
                     ui.end_row();
 
-                    ui.label("Icon:");
+                    ui.label(egui_i18n::tr!("station_icon_label"));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.new_station_icon)
                             .desired_width(ui.available_width() - 8.0),
@@ -617,7 +688,10 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
             ui.horizontal(|ui| {
                 let valid = !state.new_station_name.trim().is_empty()
                     && !state.new_station_url.trim().is_empty();
-                if ui.add_enabled(valid, egui::Button::new("✔ Add")).clicked() {
+                if ui
+                    .add_enabled(valid, egui::Button::new(egui_i18n::tr!("add_button")))
+                    .clicked()
+                {
                     state.config.sources[source_idx].stations.push(Station {
                         name: state.new_station_name.trim().to_string(),
                         url: state.new_station_url.trim().to_string(),
@@ -630,7 +704,7 @@ fn paint_stations(ui: &mut egui::Ui, state: &mut SettingsState, source_idx: usiz
                     state.new_station_url.clear();
                     state.new_station_icon.clear();
                 }
-                if ui.button("✖ Cancel").clicked() {
+                if ui.button(egui_i18n::tr!("cancel_button")).clicked() {
                     state.adding_station_for = None;
                 }
             });
