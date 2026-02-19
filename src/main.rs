@@ -537,6 +537,14 @@ impl Homeplayer {
                 PlayerState::Stopped => {
                     self.is_playing = false;
                     self.is_paused = false;
+                    self.current_title = TitleChanged {
+                        artist: String::new(),
+                        album: String::new(),
+                        title: String::new(),
+                        cover: String::new(),
+                    };
+                    self.cover_texture = None;
+                    self.cover_texture_path = String::new();
                 }
                 PlayerState::StartPlaying => {
                     self.is_playing = true;
