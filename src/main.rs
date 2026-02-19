@@ -39,7 +39,10 @@ fn main() -> eframe::Result<()> {
             warn!("Using default configuration");
             Config {
                 sources: vec![],
-                audio: AudioConfig { start_volume: 50 },
+                audio: AudioConfig {
+                    start_volume: 50,
+                    device: None,
+                },
                 ui: UiConfig::default(),
             }
         }
@@ -67,7 +70,7 @@ fn main() -> eframe::Result<()> {
     let (button_tx, button_rx) = mpsc::channel();
 
     // Create player
-    let player = RodioPlayer::new(title_tx, button_tx);
+    let player = RodioPlayer::new(title_tx, button_tx, config.audio.device.as_deref());
     player.set_volume(initial_volume);
 
     // Build dynamic pages
@@ -539,6 +542,89 @@ impl Homeplayer {
         }
     }
 
+    /// Rebuild pages, source states, and player configuration from the
+    /// current `self.config`.  Called after saving a new configuration so
+    /// that changes take effect immediately without a restart.
+    fn apply_config(&mut self) {
+        // ── 1. Audio device ────────────────────────────────────────────
+        // Switch the audio output device if it changed.  The player
+        // preserves its volume across the switch.
+        self.player
+            .switch_device(self.config.audio.device.as_deref());
+
+        // ── 2. Rebuild pages ───────────────────────────────────────────
+        let mut pages: Vec<DynamicPage> = Vec::new();
+        pages.push(DynamicPage::NowPlaying);
+        for (i, _source) in self.config.sources.iter().enumerate() {
+            pages.push(DynamicPage::Source(i));
+        }
+        if !self.config.ui.hide_settings {
+            pages.push(DynamicPage::Settings);
+        }
+        self.pages = pages;
+        self.swipe_view.set_num_pages(self.pages.len());
+
+        // ── 3. Rebuild file source states ──────────────────────────────
+        let mut file_source_states: HashMap<usize, FileSourceState> = HashMap::new();
+        for (i, source) in self.config.sources.iter().enumerate() {
+            if matches!(source.source_type, ConfigSourceType::File) {
+                let mut state = FileSourceState::new();
+                if let Some(ref store) = self.music_store
+                    && let Ok(source_id) = store.get_source_id(&source.name)
+                {
+                    state.source_id = Some(source_id);
+                    if let Ok(artists) = store.get_artists(source_id) {
+                        state.artists = artists;
+                    }
+                }
+                file_source_states.insert(i, state);
+            }
+        }
+        self.file_source_states = file_source_states;
+
+        // ── 4. Rebuild KidsFile source states ──────────────────────────
+        let mut kids_file_source_states: HashMap<usize, KidsFileSourceState> = HashMap::new();
+        for (i, source) in self.config.sources.iter().enumerate() {
+            if matches!(source.source_type, ConfigSourceType::KidsFile) {
+                let mut state = KidsFileSourceState::new();
+                if let Some(ref store) = self.music_store
+                    && let Ok(source_id) = store.get_source_id(&source.name)
+                {
+                    state.source_id = Some(source_id);
+                    if let Ok(albums) = store.get_albums_with_artist(source_id) {
+                        state.albums = albums;
+                    }
+                }
+                kids_file_source_states.insert(i, state);
+            }
+        }
+        self.kids_file_source_states = kids_file_source_states;
+
+        // ── 5. Rebuild CD source states ────────────────────────────────
+        let mut cd_source_states: HashMap<usize, CdSourceState> = HashMap::new();
+        for (i, source) in self.config.sources.iter().enumerate() {
+            if matches!(source.source_type, ConfigSourceType::CD) {
+                cd_source_states.insert(i, CdSourceState::new());
+            }
+        }
+        self.cd_source_states = cd_source_states;
+
+        // ── 6. Clear cached textures so they are re-loaded ─────────────
+        // Station icon textures may have changed (different sources or
+        // edited stations), so drop them and let the lazy-loading in
+        // update() re-create them.
+        self.station_textures.clear();
+        self.kids_cover_textures.clear();
+
+        info!(
+            "Configuration applied (pages: {}, file sources: {}, kids sources: {}, CD sources: {})",
+            self.pages.len(),
+            self.file_source_states.len(),
+            self.kids_file_source_states.len(),
+            self.cd_source_states.len()
+        );
+    }
+
     fn process_action(&mut self, action: UiAction) {
         match action {
             UiAction::PlayTitles {
@@ -624,10 +710,11 @@ impl Homeplayer {
                 Ok(_) => {
                     info!("Configuration saved successfully");
                     self.config = config;
+                    self.apply_config();
                     self.settings_state.config = self.config.clone();
                     self.settings_state.dirty = false;
                     self.settings_state.save_message =
-                        Some(("✔ Configuration saved successfully.".to_string(), true));
+                        Some(("✔ Configuration saved and applied.".to_string(), true));
                 }
                 Err(e) => {
                     error!("Failed to save configuration: {e}");

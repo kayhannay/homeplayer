@@ -14,7 +14,9 @@ pub mod cd_audio;
 
 use anyhow::Error;
 use icy_metadata::{IcyHeaders, IcyMetadataReader, RequestIcyMetadata};
-use rodio::{OutputStream, Sink, Source};
+use rodio::cpal;
+use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::{OutputStream, OutputStreamBuilder, Sink, Source};
 use std::num::NonZeroUsize;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -24,7 +26,7 @@ use stream_download::http::{HttpStream, reqwest::Client};
 use stream_download::storage::bounded::BoundedStorageProvider;
 use stream_download::storage::memory::MemoryStorageProvider;
 use stream_download::{Settings, StreamDownload};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Placeholder string used when no meaningful value is available (e.g. unknown
 /// album or artist in stream metadata).
@@ -64,10 +66,16 @@ pub struct SoundItem {
 }
 
 /// The main struct, the player with all the functionality in it.
+///
+/// The sink and output stream are stored behind a double-`Arc` with a `Mutex`
+/// in between (`Arc<Mutex<Arc<T>>>`).  This allows the active audio device to
+/// be swapped at runtime via [`switch_device`](RodioPlayer::switch_device)
+/// while spawned playback threads keep a clone of the *inner* `Arc<Sink>` and
+/// continue to reference the (stopped) old sink until they exit naturally.
 #[derive(Clone)]
 pub struct RodioPlayer {
-    sink: Arc<Sink>,
-    _stream: Arc<OutputStream>,
+    sink: Arc<Mutex<Arc<Sink>>>,
+    _stream: Arc<Mutex<Arc<OutputStream>>>,
     sound_queue: Arc<Mutex<Vec<SoundItem>>>,
     sound_queue_index: Arc<Mutex<usize>>,
     mute_volume: Arc<Mutex<f32>>,
@@ -75,24 +83,91 @@ pub struct RodioPlayer {
     button_state_sender: Sender<PlayerState>,
 }
 
+/// Returns a list of names of available audio output devices.
+///
+/// The list always starts with a `"Default"` entry representing the
+/// system's default output device.  The remaining entries are the names
+/// reported by the OS audio back-end.
+pub fn list_output_devices() -> Vec<String> {
+    let mut names = vec!["Default".to_string()];
+    if let Ok(devices) = cpal::default_host().output_devices() {
+        for device in devices {
+            if let Ok(name) = device.name() {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
 impl RodioPlayer {
+    /// Creates a new `RodioPlayer`.
+    ///
+    /// When `device_name` is `None` (or `Some("Default")`), the system's
+    /// default output device is used.  Otherwise the device whose name
+    /// matches the given string is selected.  If the requested device
+    /// cannot be found the default device is used as a fallback.
     pub fn new(
         title_changed_sender: Sender<TitleChanged>,
         button_state_sender: Sender<PlayerState>,
+        device_name: Option<&str>,
     ) -> Self {
-        let stream = rodio::OutputStreamBuilder::open_default_stream().unwrap();
+        let stream = open_output_stream(device_name);
         let sink = rodio::Sink::connect_new(stream.mixer());
-        let wrapped_sink = Arc::new(sink);
 
         Self {
-            sink: wrapped_sink,
-            _stream: Arc::new(stream),
+            sink: Arc::new(Mutex::new(Arc::new(sink))),
+            _stream: Arc::new(Mutex::new(Arc::new(stream))),
             sound_queue: Arc::new(Mutex::new(Vec::new())),
             sound_queue_index: Arc::new(Mutex::new(0)),
             mute_volume: Arc::new(Mutex::new(0.0)),
             title_changed_sender,
             button_state_sender,
         }
+    }
+
+    /// Switch the audio output device at runtime.
+    ///
+    /// This stops any current playback, creates a new output stream for the
+    /// requested device, and swaps the internal sink so that subsequent
+    /// playback uses the new device.  The volume level is preserved across
+    /// the switch.
+    ///
+    /// Spawned playback threads that still hold a reference to the old sink
+    /// will see it in a stopped state and exit naturally.
+    pub fn switch_device(&self, device_name: Option<&str>) {
+        // Grab the current volume before stopping so we can restore it.
+        let volume = {
+            let sink = self.sink.lock().unwrap();
+            sink.volume()
+        };
+
+        // Stop current playback (sets queue index to MAX so spawned threads
+        // break out of their loop, and stops the sink so sleep_until_end
+        // returns).
+        self.stop();
+        self.clear();
+
+        // Create a new output stream and sink for the requested device.
+        let stream = open_output_stream(device_name);
+        let new_sink = Arc::new(rodio::Sink::connect_new(stream.mixer()));
+        new_sink.set_volume(volume);
+
+        // Swap the sink and stream.  Old values are dropped when the last
+        // reference (held by any still-running spawned thread) goes away.
+        *self.sink.lock().unwrap() = new_sink;
+        *self._stream.lock().unwrap() = Arc::new(stream);
+
+        info!(
+            "Switched audio output device to {:?}",
+            device_name.unwrap_or("Default")
+        );
+    }
+
+    /// Clone the current inner `Arc<Sink>`.  Spawned threads should use this
+    /// to obtain a handle that remains valid even if the device is switched.
+    fn current_sink(&self) -> Arc<Sink> {
+        self.sink.lock().unwrap().clone()
     }
 
     pub fn append(&self, mut sound_items: Vec<SoundItem>) {
@@ -108,7 +183,7 @@ impl RodioPlayer {
         self.stop();
         self.clear();
 
-        let player_sink = self.sink.clone();
+        let player_sink = self.current_sink();
         let title_changed_sender = self.title_changed_sender.clone();
         let button_state_sender = self.button_state_sender.clone();
         let device = device.to_string();
@@ -131,7 +206,7 @@ impl RodioPlayer {
     }
 
     pub fn play(&self) -> Result<(), Error> {
-        let player_sink = self.sink.clone();
+        let player_sink = self.current_sink();
         let player_queue = Arc::clone(&self.sound_queue);
         let queue_index = Arc::clone(&self.sound_queue_index);
         let title_changed_sender = self.title_changed_sender.clone();
@@ -226,7 +301,7 @@ impl RodioPlayer {
             },
         );
 
-        let player_sink = self.sink.clone();
+        let player_sink = self.current_sink();
         let button_state_sender = self.button_state_sender.clone();
         let _ = spawn(move || {
             let _ = button_state_sender.send(PlayerState::Playing);
@@ -247,37 +322,40 @@ impl RodioPlayer {
         let mut idx = self.sound_queue_index.lock().unwrap();
         *idx = usize::MAX;
         drop(idx);
-        self.sink.stop();
+        let sink = self.current_sink();
+        sink.stop();
         let _ = self.button_state_sender.send(PlayerState::Stopped);
     }
 
     pub fn pause(&self) {
-        debug!("Pause: {}", self.sink.is_paused());
-        if self.sink.is_paused() {
-            self.sink.play();
+        let sink = self.current_sink();
+        debug!("Pause: {}", sink.is_paused());
+        if sink.is_paused() {
+            sink.play();
             let _ = self.button_state_sender.send(PlayerState::Playing);
         } else {
-            self.sink.pause();
+            sink.pause();
             let _ = self.button_state_sender.send(PlayerState::Paused);
         }
     }
 
     pub fn set_volume(&self, volume: f32) {
-        self.sink.set_volume(volume);
+        self.current_sink().set_volume(volume);
     }
 
     pub fn get_volume(&self) -> f32 {
-        self.sink.volume()
+        self.current_sink().volume()
     }
 
     pub fn mute(&self) {
+        let sink = self.current_sink();
         let mut mute_vol = self.mute_volume.lock().unwrap();
-        if self.sink.volume() != 0.0 {
-            *mute_vol = self.sink.volume();
-            self.sink.set_volume(0.0);
+        if sink.volume() != 0.0 {
+            *mute_vol = sink.volume();
+            sink.set_volume(0.0);
             let _ = self.button_state_sender.send(PlayerState::Muted);
         } else {
-            self.sink.set_volume(*mute_vol);
+            sink.set_volume(*mute_vol);
             *mute_vol = 0.0;
             let _ = self.button_state_sender.send(PlayerState::Unmuted);
         }
@@ -286,27 +364,27 @@ impl RodioPlayer {
     pub fn clear(&self) {
         self.sound_queue.lock().unwrap().clear();
         *self.sound_queue_index.lock().unwrap() = 0;
-        self.sink.clear();
+        self.current_sink().clear();
     }
 
     pub fn skip_next(&self) {
-        self.sink.stop();
+        self.current_sink().stop();
     }
 
     pub fn skip_previous(&self) {
         let mut idx = self.sound_queue_index.lock().unwrap();
         *idx = idx.saturating_sub(2);
         drop(idx);
-        self.sink.stop();
+        self.current_sink().stop();
     }
 
     pub fn forward(&self) {
-        let s = &self.sink;
+        let s = self.current_sink();
         let _ = s.try_seek(s.get_pos() + Duration::from_secs(5));
     }
 
     pub fn rewind(&self) {
-        let s = &self.sink;
+        let s = self.current_sink();
         if s.get_pos() > Duration::from_secs(5) {
             let result = s.try_seek(s.get_pos() - Duration::from_secs(5));
             if let Err(error) = result {
@@ -376,6 +454,46 @@ fn start_cd_playback(
     button_state_sender.send(PlayerState::Stopped)?;
     button_state_sender.send(PlayerState::Unseekable)?;
     Ok(())
+}
+
+/// Open an [`OutputStream`] for the device identified by `device_name`.
+///
+/// When the name is `None`, empty, or `"Default"` the system default device
+/// is used.  If a specific device cannot be found, falls back to the default.
+fn open_output_stream(device_name: Option<&str>) -> OutputStream {
+    let use_default = match device_name {
+        None => true,
+        Some(name) => name.is_empty() || name == "Default",
+    };
+
+    if !use_default {
+        let requested = device_name.unwrap();
+        if let Ok(devices) = cpal::default_host().output_devices() {
+            for device in devices {
+                if let Ok(name) = device.name() {
+                    if name == requested {
+                        match OutputStreamBuilder::from_device(device).and_then(|b| b.open_stream())
+                        {
+                            Ok(stream) => {
+                                info!("Opened audio output device: {requested}");
+                                return stream;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to open audio device '{requested}': {e}, \
+                                     falling back to default"
+                                );
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        warn!("Audio device '{requested}' not found, falling back to default");
+    }
+
+    OutputStreamBuilder::open_default_stream().expect("Failed to open default audio output stream")
 }
 
 fn start_playback_queue(

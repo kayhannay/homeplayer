@@ -1,4 +1,5 @@
 use eframe::egui;
+use rodio_player::list_output_devices;
 
 use crate::UiAction;
 use crate::config::{Config, ConfigSourceType, Source, Station};
@@ -28,6 +29,8 @@ pub struct SettingsState {
     pub confirm_remove_source: Option<usize>,
     /// Confirmation dialog for station removal (source_idx, station_idx).
     pub confirm_remove_station: Option<(usize, usize)>,
+    /// Cached list of available audio output device names.
+    pub available_devices: Vec<String>,
 }
 
 impl SettingsState {
@@ -47,6 +50,7 @@ impl SettingsState {
             new_station_icon: String::new(),
             confirm_remove_source: None,
             confirm_remove_station: None,
+            available_devices: list_output_devices(),
         }
     }
 
@@ -66,6 +70,7 @@ impl SettingsState {
         self.new_station_icon.clear();
         self.confirm_remove_source = None;
         self.confirm_remove_station = None;
+        self.available_devices = list_output_devices();
     }
 }
 
@@ -113,6 +118,32 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                 state.dirty = true;
                 state.save_message = None;
             }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Output device:");
+            let current = state.config.audio.device.as_deref().unwrap_or("Default");
+            egui::ComboBox::from_id_salt("audio_device")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for name in &state.available_devices {
+                        let is_default = name == "Default";
+                        let new_value: Option<String> =
+                            if is_default { None } else { Some(name.clone()) };
+                        if ui
+                            .selectable_label(
+                                state.config.audio.device.as_deref().unwrap_or("Default") == name,
+                                name,
+                            )
+                            .clicked()
+                            && state.config.audio.device != new_value
+                        {
+                            state.config.audio.device = new_value;
+                            state.dirty = true;
+                            state.save_message = None;
+                        }
+                    }
+                });
         });
     });
 
@@ -370,9 +401,7 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(state.dirty, egui::Button::new("💾 Save"))
-                .on_hover_text(
-                    "Save configuration to disk (restart recommended for source changes)",
-                )
+                .on_hover_text("Save configuration and apply changes immediately")
                 .clicked()
             {
                 actions.push(UiAction::SaveConfig {
@@ -406,17 +435,6 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                 egui::Color32::from_rgb(255, 100, 100)
             };
             ui.label(egui::RichText::new(msg).color(color).small());
-        }
-
-        if !state.dirty {
-            if let Some((_, true)) = &state.save_message {
-                ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new("ℹ Restart the application to apply source changes.")
-                        .weak()
-                        .small(),
-                );
-            }
         }
     });
 

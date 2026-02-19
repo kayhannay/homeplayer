@@ -55,6 +55,15 @@ impl SwipeView {
         self.target_page = page.min(self.num_pages - 1);
     }
 
+    /// Update the number of pages.  The current page is clamped so that it
+    /// stays within bounds.
+    pub fn set_num_pages(&mut self, num_pages: usize) {
+        self.num_pages = num_pages.max(1);
+        if self.target_page >= self.num_pages {
+            self.target_page = self.num_pages - 1;
+        }
+    }
+
     pub fn current_page(&self) -> usize {
         self.target_page
     }

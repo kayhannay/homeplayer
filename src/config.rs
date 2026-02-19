@@ -43,6 +43,10 @@ pub struct Station {
 #[allow(unused)]
 pub struct AudioConfig {
     pub start_volume: u8,
+    /// Name of the audio output device to use. When `None` or `"Default"` the
+    /// system default device is used.
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
