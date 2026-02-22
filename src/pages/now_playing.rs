@@ -6,9 +6,6 @@ use crate::pages::semi_transparent_fill;
 pub fn paint_now_playing(
     ui: &mut egui::Ui,
     current_title: &TitleChanged,
-    is_playing: bool,
-    is_paused: bool,
-    volume: f32,
     cover_texture: Option<&egui::TextureHandle>,
 ) {
     let art_size = egui::vec2(150.0, 150.0);

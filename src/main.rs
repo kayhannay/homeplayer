@@ -1327,9 +1327,6 @@ impl eframe::App for Homeplayer {
         let pages = self.pages.clone();
         let config = self.config.clone();
         let current_title = self.current_title.clone();
-        let is_playing = self.is_playing;
-        let is_paused = self.is_paused;
-        let volume = self.volume;
         let is_scanning = self.scanning.load(Ordering::SeqCst);
 
         // Pre-extract cover texture reference to avoid borrow conflict with swipe_view
@@ -1513,14 +1510,7 @@ impl eframe::App for Homeplayer {
                             }
                         }
                         DynamicPage::NowPlaying => {
-                            paint_now_playing(
-                                ui,
-                                &current_title,
-                                is_playing,
-                                is_paused,
-                                volume,
-                                cover_texture.as_ref(),
-                            );
+                            paint_now_playing(ui, &current_title, cover_texture.as_ref());
                         }
                         DynamicPage::Settings => {
                             paint_settings(ui, settings_state, &mut actions);
