@@ -204,6 +204,24 @@ impl SwipeView {
             // Wrap page content in a vertical ScrollArea
             egui::ScrollArea::vertical()
                 .id_salt(format!("swipe_page_scroll_{}", page_idx))
+                // When a new touch press starts, egui computes pointer.delta() as the
+                // difference from the last known pointer position (where the previous
+                // touch lifted) to the new touch position.  The scroll area's background
+                // drag widget uses Sense::drag()-only (no click), so egui marks it as
+                // "dragged" immediately on the very first frame of the new press —
+                // without waiting for any movement threshold — and applies that
+                // "teleport" delta straight to the scroll offset.  This causes the
+                // visible jump-back described by the user.
+                //
+                // Fix: disable drag-to-scroll on the single frame where any_pressed()
+                // is true.  On that frame pointer.delta() carries the bogus teleport
+                // distance; on every subsequent frame it is the real per-frame
+                // finger movement, so normal drag scrolling (and kinetic scrolling)
+                // resume without any visible glitch.
+                .scroll_source(egui::scroll_area::ScrollSource {
+                    drag: !pointer_pressed,
+                    ..egui::scroll_area::ScrollSource::ALL
+                })
                 .show(&mut child_ui, |ui| {
                     ui.set_min_width(available_width - 16.0);
                     add_page(ui, page_idx);
