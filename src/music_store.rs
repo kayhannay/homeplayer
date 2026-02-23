@@ -483,6 +483,7 @@ impl MusicStore {
             }
         }
         let cover = MusicStore::get_cover(images);
+        files.sort();
         files
             .iter()
             .enumerate()
