@@ -43,10 +43,18 @@ pub struct Station {
 #[allow(unused)]
 pub struct AudioConfig {
     pub start_volume: u8,
+    /// Maximum volume the player is allowed to reach (0–100).  Defaults to
+    /// 100 when not present in the configuration file.
+    #[serde(default = "default_max_volume")]
+    pub max_volume: u8,
     /// Name of the audio output device to use. When `None` or `"Default"` the
     /// system default device is used.
     #[serde(default)]
     pub device: Option<String>,
+}
+
+fn default_max_volume() -> u8 {
+    100
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -50,6 +50,7 @@ fn main() -> eframe::Result<()> {
                 sources: vec![],
                 audio: AudioConfig {
                     start_volume: 50,
+                    max_volume: 100,
                     device: None,
                 },
                 ui: UiConfig::default(),
@@ -59,7 +60,12 @@ fn main() -> eframe::Result<()> {
 
     init_i18n(&config.ui.language);
 
-    let initial_volume = (config.audio.start_volume.min(100) as f32) / 100.0;
+    let initial_volume = (config
+        .audio
+        .start_volume
+        .min(config.audio.max_volume)
+        .min(100) as f32)
+        / 100.0;
 
     // Initialize music store
     let music_store = match Connection::open("music_store.db3") {
@@ -570,6 +576,13 @@ impl Homeplayer {
         // preserves its volume across the switch.
         self.player
             .switch_device(self.config.audio.device.as_deref());
+
+        // ── 1a. Clamp live volume to the (possibly reduced) max_volume ──
+        let max_vol = self.config.audio.max_volume as f32 / 100.0;
+        if self.volume > max_vol {
+            self.volume = max_vol;
+            self.player.set_volume(max_vol);
+        }
 
         // ── 1b. Language ───────────────────────────────────────────────
         egui_i18n::set_language(&self.config.ui.language);
@@ -1243,8 +1256,10 @@ impl eframe::App for Homeplayer {
                     {
                         actions.push(UiAction::PlayerMute);
                     }
+                    let max_vol = self.config.audio.max_volume as f32 / 100.0;
                     let mut vol = self.volume;
-                    let response = ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
+                    let response =
+                        ui.add(egui::Slider::new(&mut vol, 0.0..=max_vol).show_value(false));
                     if response.changed() {
                         self.volume = vol;
                         actions.push(UiAction::PlayerVolume(vol));

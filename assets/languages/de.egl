@@ -40,6 +40,7 @@ settings_theme = Design:
 settings_language = Sprache:
 settings_audio = Audio
 settings_start_volume = Startlautstärke:
+settings_max_volume = Maximale Lautstärke:
 settings_output_device = Ausgabegerät:
 settings_sources = Quellen
 add_source_button = ➕ Quelle hinzufügen

@@ -40,6 +40,7 @@ settings_theme = Theme:
 settings_language = Language:
 settings_audio = Audio
 settings_start_volume = Start volume:
+settings_max_volume = Max volume:
 settings_output_device = Output device:
 settings_sources = Sources
 add_source_button = ➕ Add Source

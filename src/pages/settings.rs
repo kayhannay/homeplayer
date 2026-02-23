@@ -144,11 +144,27 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
         );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(egui_i18n::tr!("settings_start_volume"));
-            let mut vol = state.config.audio.start_volume as i32;
-            let slider = egui::Slider::new(&mut vol, 0..=100).suffix("%");
+            ui.label(egui_i18n::tr!("settings_max_volume"));
+            let mut max_vol = state.config.audio.max_volume as i32;
+            let slider = egui::Slider::new(&mut max_vol, 0..=100).suffix("%");
             if ui.add(slider).changed() {
-                state.config.audio.start_volume = vol.clamp(0, 100) as u8;
+                state.config.audio.max_volume = max_vol.clamp(0, 100) as u8;
+                // Clamp start_volume so it never exceeds the new max_volume.
+                if state.config.audio.start_volume > state.config.audio.max_volume {
+                    state.config.audio.start_volume = state.config.audio.max_volume;
+                }
+                state.dirty = true;
+                state.save_message = None;
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui_i18n::tr!("settings_start_volume"));
+            let max_vol = state.config.audio.max_volume as i32;
+            let mut vol = state.config.audio.start_volume as i32;
+            let slider = egui::Slider::new(&mut vol, 0..=max_vol).suffix("%");
+            if ui.add(slider).changed() {
+                state.config.audio.start_volume = vol.clamp(0, max_vol) as u8;
                 state.dirty = true;
                 state.save_message = None;
             }
