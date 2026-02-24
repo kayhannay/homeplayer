@@ -494,43 +494,13 @@ impl Homeplayer {
     }
 
     fn drain_channels(&mut self) {
-        // Drain title changes
-        while let Ok(title) = self.title_rx.try_recv() {
-            debug!("Title changed: {} - {}", title.artist, title.title);
-            self.current_title = title;
-        }
-
-        // Poll for CD TOC read completion
-        if let Some((source_idx, ref rx)) = self.cd_toc_rx {
-            if let Ok(result) = rx.try_recv() {
-                let idx = source_idx;
-                self.cd_toc_rx = None;
-                if let Some(state) = self.cd_source_states.get_mut(&idx) {
-                    state.loading = false;
-                    match result {
-                        Ok(cd_info) => {
-                            let audio_count = cd_info.audio_tracks().len();
-                            info!(
-                                "CD TOC loaded: {} tracks ({} audio)",
-                                cd_info.tracks.len(),
-                                audio_count
-                            );
-                            state.disc_present = true;
-                            state.status = format!("{audio_count} audio tracks found.");
-                            state.tracks = cd_info.tracks;
-                        }
-                        Err(e) => {
-                            error!("Failed to read CD TOC: {e}");
-                            state.disc_present = false;
-                            state.tracks.clear();
-                            state.status = format!("Failed to read disc: {e}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // Drain button state changes
+        // Drain button state changes first so that a `Stopped` event (sent by
+        // `stop()` at the start of `play_cd`) doesn't overwrite the
+        // `TitleChanged` message for the very first track, which is sent by
+        // the playback thread right after the `Playing` / `StartPlaying`
+        // events.  Processing button states first means `Stopped` clears the
+        // old title, and the subsequent title-channel drain then sets the new
+        // track title correctly.
         while let Ok(state) = self.button_state_rx.try_recv() {
             match state {
                 PlayerState::Playing => {
@@ -563,6 +533,43 @@ impl Homeplayer {
                     self.is_muted = false;
                 }
                 PlayerState::Seekable | PlayerState::Unseekable => {}
+            }
+        }
+
+        // Drain title changes (after button states, so a fresh TitleChanged is
+        // never clobbered by a Stopped that arrived in the same drain cycle)
+        while let Ok(title) = self.title_rx.try_recv() {
+            debug!("Title changed: {} - {}", title.artist, title.title);
+            self.current_title = title;
+        }
+
+        // Poll for CD TOC read completion
+        if let Some((source_idx, ref rx)) = self.cd_toc_rx {
+            if let Ok(result) = rx.try_recv() {
+                let idx = source_idx;
+                self.cd_toc_rx = None;
+                if let Some(state) = self.cd_source_states.get_mut(&idx) {
+                    state.loading = false;
+                    match result {
+                        Ok(cd_info) => {
+                            let audio_count = cd_info.audio_tracks().len();
+                            info!(
+                                "CD TOC loaded: {} tracks ({} audio)",
+                                cd_info.tracks.len(),
+                                audio_count
+                            );
+                            state.disc_present = true;
+                            state.status = format!("{audio_count} audio tracks found.");
+                            state.tracks = cd_info.tracks;
+                        }
+                        Err(e) => {
+                            error!("Failed to read CD TOC: {e}");
+                            state.disc_present = false;
+                            state.tracks.clear();
+                            state.status = format!("Failed to read disc: {e}");
+                        }
+                    }
+                }
             }
         }
     }
