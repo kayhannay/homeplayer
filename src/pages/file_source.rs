@@ -275,6 +275,56 @@ fn paint_breadcrumb(
 // Sub-painters
 // ---------------------------------------------------------------------------
 
+/// Renders a full-width row containing a main button on the left and a small
+/// "➕" button pinned to the right.  Uses `ui.put()` so that both buttons
+/// inherit the parent (vertical) layout and reproduce the original
+/// left-aligned button text placement.
+///
+/// Returns `(main_clicked, add_clicked)`.
+fn row_with_add_button(
+    ui: &mut egui::Ui,
+    fill: egui::Color32,
+    label: egui::RichText,
+    height: f32,
+) -> (bool, bool) {
+    let add_btn_width = 48.0;
+    let spacing = ui.spacing().item_spacing.x;
+    let total_width = ui.available_width();
+    let main_width = (total_width - add_btn_width - spacing).max(0.0);
+
+    let (row_rect, _) =
+        ui.allocate_exact_size(egui::vec2(total_width, height), egui::Sense::hover());
+
+    let main_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(main_width, height));
+    let add_rect = egui::Rect::from_min_size(
+        egui::pos2(row_rect.max.x - add_btn_width, row_rect.min.y),
+        egui::vec2(add_btn_width, height),
+    );
+
+    let main_clicked = ui
+        .new_child(
+            egui::UiBuilder::new()
+                .max_rect(main_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        )
+        .add(
+            egui::Button::new(label)
+                .fill(fill)
+                .frame(true)
+                .min_size(main_rect.size()),
+        )
+        .clicked();
+    let add_clicked = ui
+        .put(
+            add_rect,
+            egui::Button::new(egui::RichText::new("➕").size(14.0)),
+        )
+        .on_hover_text(egui_i18n::tr!("add_to_playlist_hover"))
+        .clicked();
+
+    (main_clicked, add_clicked)
+}
+
 fn paint_artist_list(
     ui: &mut egui::Ui,
     source_idx: usize,
@@ -306,13 +356,18 @@ fn paint_artist_list(
 
         let fill = semi_transparent_fill(ui);
         for artist in &data.artists {
-            let response = ui.add(
-                egui::Button::new(egui::RichText::new(format!("🎤  {}", artist.name)).size(16.0))
-                    .fill(fill)
-                    .frame(true)
-                    .min_size(egui::vec2(ui.available_width(), 48.0)),
+            let (main, add) = row_with_add_button(
+                ui,
+                fill,
+                egui::RichText::new(format!("🎤  {}", artist.name)).size(16.0),
+                48.0,
             );
-            if response.clicked() {
+            if add {
+                actions.push(UiAction::AddArtistToPlaylist {
+                    source_idx,
+                    artist_id: artist.id,
+                });
+            } else if main {
                 actions.push(UiAction::BrowseAlbums {
                     source_idx,
                     artist_id: artist.id,
@@ -356,13 +411,18 @@ fn paint_album_list_artist_mode(
 
         let fill = semi_transparent_fill(ui);
         for album in &data.albums {
-            let response = ui.add(
-                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(16.0))
-                    .fill(fill)
-                    .frame(true)
-                    .min_size(egui::vec2(ui.available_width(), 48.0)),
+            let (main, add) = row_with_add_button(
+                ui,
+                fill,
+                egui::RichText::new(format!("💿  {}", album.name)).size(16.0),
+                48.0,
             );
-            if response.clicked() {
+            if add {
+                actions.push(UiAction::AddAlbumToPlaylist {
+                    source_idx,
+                    album_id: album.id,
+                });
+            } else if main {
                 actions.push(UiAction::BrowseTitles {
                     source_idx,
                     artist_id,
@@ -406,13 +466,18 @@ fn paint_album_list_album_mode(
 
         let fill = semi_transparent_fill(ui);
         for album in &data.albums {
-            let response = ui.add(
-                egui::Button::new(egui::RichText::new(format!("💿  {}", album.name)).size(16.0))
-                    .fill(fill)
-                    .frame(true)
-                    .min_size(egui::vec2(ui.available_width(), 48.0)),
+            let (main, add) = row_with_add_button(
+                ui,
+                fill,
+                egui::RichText::new(format!("💿  {}", album.name)).size(16.0),
+                48.0,
             );
-            if response.clicked() {
+            if add {
+                actions.push(UiAction::AddAlbumToPlaylist {
+                    source_idx,
+                    album_id: album.id,
+                });
+            } else if main {
                 actions.push(UiAction::BrowseAlbumTitles {
                     source_idx,
                     album_id: album.id,
@@ -454,13 +519,13 @@ fn paint_title_list(ui: &mut egui::Ui, data: &FileRenderData, actions: &mut Vec<
                 format!("🎵  {}", title.name)
             };
 
-            let response = ui.add(
-                egui::Button::new(egui::RichText::new(label).size(15.0))
-                    .fill(fill)
-                    .frame(true)
-                    .min_size(egui::vec2(ui.available_width(), 48.0)),
-            );
-            if response.clicked() {
+            let (main, add) =
+                row_with_add_button(ui, fill, egui::RichText::new(label).size(15.0), 48.0);
+            if add {
+                actions.push(UiAction::AddTitlesToPlaylist {
+                    titles: vec![title.clone()],
+                });
+            } else if main {
                 actions.push(UiAction::PlayTitles {
                     titles: data.titles.clone(),
                     start_index: i,

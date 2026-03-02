@@ -371,6 +371,52 @@ impl RodioPlayer {
         self.current_sink().stop();
     }
 
+    /// Returns a snapshot of the current sound queue together with the index
+    /// of the item that is currently playing (or about to play next).
+    ///
+    /// The returned index is the *next* item the playback thread will pick up,
+    /// so the **currently playing** item is at `index.saturating_sub(1)`.
+    pub fn get_queue(&self) -> (Vec<SoundItem>, usize) {
+        let queue = self.sound_queue.lock().unwrap().clone();
+        let index = *self.sound_queue_index.lock().unwrap();
+        (queue, index)
+    }
+
+    /// Remove the item at position `item_index` from the queue.
+    ///
+    /// * If the item is **already past** (its index < current playing index)
+    ///   the playing index is decremented by one so that the currently-playing
+    ///   track is not affected.
+    /// * If the item is the **currently playing** track (index ==
+    ///   `current_index - 1`) the current track is skipped and the next one
+    ///   will start.
+    /// * If the item is **ahead** in the queue nothing special needs to happen.
+    pub fn remove_from_queue(&self, item_index: usize) {
+        let mut queue = self.sound_queue.lock().unwrap();
+        let mut idx = self.sound_queue_index.lock().unwrap();
+
+        if item_index >= queue.len() {
+            return;
+        }
+
+        queue.remove(item_index);
+
+        if item_index < *idx {
+            // The removed item was already played (or is the current one);
+            // shift the index back so the playback thread keeps pointing at
+            // the correct next item.
+            *idx = idx.saturating_sub(1);
+
+            // If the removed item was the currently-playing one we also need
+            // to stop the sink so the playback thread advances to the next.
+            if item_index == *idx {
+                drop(idx);
+                drop(queue);
+                self.current_sink().stop();
+            }
+        }
+    }
+
     pub fn skip_previous(&self) {
         let mut idx = self.sound_queue_index.lock().unwrap();
         *idx = idx.saturating_sub(2);

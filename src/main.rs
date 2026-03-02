@@ -21,7 +21,7 @@ use crate::config::{AudioConfig, Config, ConfigSourceType, UiConfig};
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
     CdSourceState, FileRenderData, KidsFileRenderData, SettingsState, paint_cd_source,
-    paint_file_source, paint_kids_file_source, paint_now_playing, paint_settings,
+    paint_file_source, paint_kids_file_source, paint_now_playing, paint_playlist, paint_settings,
     paint_stream_source, source_type_icon,
 };
 use crate::swipe_view::SwipeView;
@@ -93,6 +93,7 @@ fn main() -> eframe::Result<()> {
     // Build dynamic pages
     let mut pages: Vec<DynamicPage> = Vec::new();
     pages.push(DynamicPage::NowPlaying);
+    pages.push(DynamicPage::Playlist);
     for (i, _source) in config.sources.iter().enumerate() {
         pages.push(DynamicPage::Source(i));
     }
@@ -194,11 +195,13 @@ fn main() -> eframe::Result<()> {
                 current_title: TitleChanged {
                     artist: String::new(),
                     album: String::new(),
-                    title: "No track selected".to_string(),
+                    title: String::new(),
                     cover: String::new(),
                 },
                 volume: initial_volume,
                 pages,
+                playlist_queue: Vec::new(),
+                playlist_index: 0,
                 file_source_states,
                 kids_file_source_states,
                 cd_source_states,
@@ -298,6 +301,7 @@ impl BackgroundImages {
 enum DynamicPage {
     Source(usize),
     NowPlaying,
+    Playlist,
     Settings,
 }
 
@@ -309,6 +313,7 @@ fn page_label(page: &DynamicPage, config: &Config) -> String {
             format!("{} {}", icon, source.name)
         }
         DynamicPage::NowPlaying => egui_i18n::tr!("page_playing"),
+        DynamicPage::Playlist => egui_i18n::tr!("page_playlist"),
         DynamicPage::Settings => egui_i18n::tr!("page_settings"),
     }
 }
@@ -433,6 +438,21 @@ pub(crate) enum UiAction {
         source_idx: usize,
         album_id: i32,
     },
+    AddTitlesToPlaylist {
+        titles: Vec<MusicTitleItem>,
+    },
+    AddAlbumToPlaylist {
+        source_idx: usize,
+        album_id: i32,
+    },
+    AddArtistToPlaylist {
+        source_idx: usize,
+        artist_id: i32,
+    },
+    AddKidsAlbumToPlaylist {
+        source_idx: usize,
+        album_id: i32,
+    },
     PlayerPlay,
     PlayerPause,
     PlayerStop,
@@ -440,6 +460,10 @@ pub(crate) enum UiAction {
     PlayerPrevious,
     PlayerVolume(f32),
     PlayerMute,
+    PlaylistRemove {
+        index: usize,
+    },
+    PlaylistClear,
     SaveConfig {
         config: Config,
     },
@@ -463,6 +487,10 @@ struct Homeplayer {
     current_title: TitleChanged,
     volume: f32,
     pages: Vec<DynamicPage>,
+    /// Snapshot of the player queue, updated every frame.
+    playlist_queue: Vec<rodio_player::SoundItem>,
+    /// Index of the next item the playback thread will pick up.
+    playlist_index: usize,
     file_source_states: HashMap<usize, FileSourceState>,
     kids_file_source_states: HashMap<usize, KidsFileSourceState>,
     cd_source_states: HashMap<usize, CdSourceState>,
@@ -572,6 +600,11 @@ impl Homeplayer {
                 }
             }
         }
+
+        // Refresh the playlist snapshot so the playlist page shows live data.
+        let (queue, idx) = self.player.get_queue();
+        self.playlist_queue = queue;
+        self.playlist_index = idx;
     }
 
     /// Rebuild pages, source states, and player configuration from the
@@ -597,6 +630,7 @@ impl Homeplayer {
         // ── 2. Rebuild pages ───────────────────────────────────────────
         let mut pages: Vec<DynamicPage> = Vec::new();
         pages.push(DynamicPage::NowPlaying);
+        pages.push(DynamicPage::Playlist);
         for (i, _source) in self.config.sources.iter().enumerate() {
             pages.push(DynamicPage::Source(i));
         }
@@ -748,6 +782,27 @@ impl Homeplayer {
             } => {
                 self.play_kids_album(source_idx, album_id);
             }
+            UiAction::AddTitlesToPlaylist { titles } => {
+                self.enqueue_titles(titles);
+            }
+            UiAction::AddAlbumToPlaylist {
+                source_idx,
+                album_id,
+            } => {
+                self.enqueue_album(source_idx, album_id);
+            }
+            UiAction::AddArtistToPlaylist {
+                source_idx,
+                artist_id,
+            } => {
+                self.enqueue_artist(source_idx, artist_id);
+            }
+            UiAction::AddKidsAlbumToPlaylist {
+                source_idx,
+                album_id,
+            } => {
+                self.enqueue_kids_album(source_idx, album_id);
+            }
             UiAction::SaveConfig { config } => match config.save() {
                 Ok(_) => {
                     info!("Configuration saved successfully");
@@ -768,6 +823,12 @@ impl Homeplayer {
             },
             UiAction::ResetSettings => {
                 self.settings_state.reset(&self.config);
+            }
+            UiAction::PlaylistRemove { index } => {
+                self.player.remove_from_queue(index);
+            }
+            UiAction::PlaylistClear => {
+                self.player.clear();
             }
         }
     }
@@ -1066,11 +1127,59 @@ impl Homeplayer {
         }
     }
 
+    fn enqueue_titles(&mut self, titles: Vec<MusicTitleItem>) {
+        let sound_items: Vec<SoundItem> = titles
+            .iter()
+            .map(|t| SoundItem {
+                artist: t.artist.clone(),
+                album: t.album.clone(),
+                title: t.name.clone(),
+                path: t.path.clone(),
+                cover: t.cover.clone(),
+            })
+            .collect();
+        self.player.append(sound_items);
+    }
+
+    fn enqueue_album(&mut self, source_idx: usize, album_id: i32) {
+        if let Some(state) = self.file_source_states.get(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_album(source_id, album_id) {
+                Ok(titles) => self.enqueue_titles(titles),
+                Err(e) => error!("Failed to load titles for album: {e}"),
+            }
+        }
+    }
+
+    fn enqueue_artist(&mut self, source_idx: usize, artist_id: i32) {
+        if let Some(state) = self.file_source_states.get(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_artist(source_id, artist_id) {
+                Ok(titles) => self.enqueue_titles(titles),
+                Err(e) => error!("Failed to load titles for artist: {e}"),
+            }
+        }
+    }
+
+    fn enqueue_kids_album(&mut self, source_idx: usize, album_id: i32) {
+        if let Some(state) = self.kids_file_source_states.get(&source_idx)
+            && let Some(source_id) = state.source_id
+            && let Some(ref store) = self.music_store
+        {
+            match store.get_titles_by_album(source_id, album_id) {
+                Ok(titles) => self.enqueue_titles(titles),
+                Err(e) => error!("Failed to load titles for kids album: {e}"),
+            }
+        }
+    }
+
     /// Reload data for a file source after a scan completes, respecting current browse mode.
     fn reload_file_source(&mut self, source_idx: usize) {
         let source = &self.config.sources[source_idx];
-
-        // Handle KidsFile sources
         if matches!(source.source_type, ConfigSourceType::KidsFile) {
             if let Some(ref store) = self.music_store
                 && let Some(state) = self.kids_file_source_states.get_mut(&source_idx)
@@ -1354,6 +1463,10 @@ impl eframe::App for Homeplayer {
         // Pre-extract cover texture reference to avoid borrow conflict with swipe_view
         let cover_texture = self.cover_texture.clone();
 
+        // Snapshot playlist data for rendering (already updated by drain_channels)
+        let playlist_queue = self.playlist_queue.clone();
+        let playlist_index = self.playlist_index;
+
         // Clone kids cover textures for rendering
         let kids_cover_textures = self.kids_cover_textures.clone();
 
@@ -1410,7 +1523,9 @@ impl eframe::App for Homeplayer {
                         ConfigSourceType::CD => self.backgrounds.cd.as_ref().map(|t| t.id()),
                     }
                 }
-                DynamicPage::NowPlaying => self.backgrounds.playing.as_ref().map(|t| t.id()),
+                DynamicPage::NowPlaying | DynamicPage::Playlist => {
+                    self.backgrounds.playing.as_ref().map(|t| t.id())
+                }
                 DynamicPage::Settings => self.backgrounds.settings.as_ref().map(|t| t.id()),
             })
             .collect();
@@ -1431,7 +1546,9 @@ impl eframe::App for Homeplayer {
                         ConfigSourceType::CD => self.backgrounds.cd.as_ref().map(|t| t.size_vec2()),
                     }
                 }
-                DynamicPage::NowPlaying => self.backgrounds.playing.as_ref().map(|t| t.size_vec2()),
+                DynamicPage::NowPlaying | DynamicPage::Playlist => {
+                    self.backgrounds.playing.as_ref().map(|t| t.size_vec2())
+                }
                 DynamicPage::Settings => self.backgrounds.settings.as_ref().map(|t| t.size_vec2()),
             })
             .collect();
@@ -1533,6 +1650,9 @@ impl eframe::App for Homeplayer {
                         }
                         DynamicPage::NowPlaying => {
                             paint_now_playing(ui, &current_title, cover_texture.as_ref());
+                        }
+                        DynamicPage::Playlist => {
+                            paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
                         }
                         DynamicPage::Settings => {
                             paint_settings(ui, settings_state, &mut actions);

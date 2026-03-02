@@ -250,8 +250,25 @@ fn paint_album_grid(
                     );
                 }
 
-                // Handle click – play all titles from this album
-                if response.clicked() {
+                // Handle click – play all titles from this album, or add to playlist
+                let btn_size = egui::vec2(36.0, 36.0);
+                let btn_rect = egui::Rect::from_min_size(
+                    egui::pos2(rect.max.x - btn_size.x - 4.0, rect.min.y + 4.0),
+                    btn_size,
+                );
+                let add_response = ui
+                    .put(
+                        btn_rect,
+                        egui::Button::new(egui::RichText::new("➕").size(14.0))
+                            .min_size(btn_size),
+                    )
+                    .on_hover_text(egui_i18n::tr!("add_to_playlist_hover"));
+                if add_response.clicked() {
+                    actions.push(UiAction::AddKidsAlbumToPlaylist {
+                        source_idx,
+                        album_id: album.id,
+                    });
+                } else if response.clicked() {
                     actions.push(UiAction::PlayKidsAlbum {
                         source_idx,
                         album_id: album.id,
