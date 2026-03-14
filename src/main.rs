@@ -12,7 +12,7 @@ use std::sync::{
 };
 
 use eframe::{NativeOptions, egui};
-use egui::{ColorImage, TextureHandle, TextureOptions};
+use egui::{ColorImage, Frame, Margin, TextureHandle, TextureOptions, Visuals};
 use rodio_player::{PlayerState, RodioPlayer, SoundItem, TitleChanged};
 use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
@@ -158,6 +158,12 @@ fn main() -> eframe::Result<()> {
             // threads forward the message and wake up the UI so it processes
             // the change immediately — even if no other interaction is happening.
             let ctx = cc.egui_ctx.clone();
+
+            let mut dark_visuals = Visuals::dark();
+            dark_visuals.weak_text_alpha = 0.9;
+            ctx.set_visuals_of(egui::Theme::Dark, dark_visuals);
+
+            replace_fonts(&ctx);
             let (bridged_title_tx, bridged_title_rx) = mpsc::channel();
             let ctx_for_titles = ctx.clone();
             std::thread::Builder::new()
@@ -1413,45 +1419,47 @@ impl eframe::App for Homeplayer {
         });
 
         // --- Bottom panel: tab buttons ---
-        egui::TopBottomPanel::bottom("tab_bar").show(ctx, |ui| {
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                let available_width = ui.available_width();
-                let tab_width = available_width / self.pages.len() as f32;
-                let current = self.swipe_view.current_page();
+        egui::TopBottomPanel::bottom("tab_bar")
+            .frame(Frame::NONE)
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    let available_width = ui.available_width();
+                    let tab_width = available_width / self.pages.len() as f32;
+                    let current = self.swipe_view.current_page();
 
-                for (i, page) in self.pages.iter().enumerate() {
-                    let is_selected = i == current;
-                    let label = page_label(page, &self.config);
-                    let text = egui::RichText::new(label);
-                    let text = if is_selected {
-                        text.strong()
-                    } else {
-                        text.weak()
-                    };
-
-                    let button = egui::Button::new(text)
-                        .corner_radius(egui::CornerRadius {
-                            nw: 4,
-                            ne: 4,
-                            sw: 0,
-                            se: 0,
-                        })
-                        .fill(if is_selected {
-                            ui.visuals().selection.bg_fill
+                    for (i, page) in self.pages.iter().enumerate() {
+                        let is_selected = i == current;
+                        let label = page_label(page, &self.config);
+                        let text = egui::RichText::new(label);
+                        let text = if is_selected {
+                            text.strong()
                         } else {
-                            egui::Color32::TRANSPARENT
-                        });
+                            text.weak()
+                        };
 
-                    let response = ui.add_sized(egui::vec2(tab_width - 4.0, 48.0), button);
+                        let button = egui::Button::new(text)
+                            .corner_radius(egui::CornerRadius {
+                                nw: 4,
+                                ne: 4,
+                                sw: 0,
+                                se: 0,
+                            })
+                            .fill(if is_selected {
+                                ui.visuals().selection.bg_fill
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            });
 
-                    if response.clicked() {
-                        self.swipe_view.set_page(i);
+                        let response = ui.add_sized(egui::vec2(tab_width, 48.0), button);
+
+                        if response.clicked() {
+                            self.swipe_view.set_page(i);
+                        }
                     }
-                }
+                });
             });
-            ui.add_space(2.0);
-        });
 
         // --- Central panel: swipe view with page content ---
         // Pre-clone/copy data needed for rendering
@@ -1555,116 +1563,144 @@ impl eframe::App for Homeplayer {
 
         let settings_state = &mut self.settings_state;
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.swipe_view.show(
-                ui,
-                |painter, rect, page_idx| {
-                    if page_idx >= bg_for_page.len() {
-                        return;
-                    }
-                    if let (Some(tex_id), Some(img_size)) =
-                        (bg_for_page[page_idx], bg_sizes[page_idx])
-                    {
-                        // "Cover" scaling: fill the rect while preserving aspect ratio
-                        let rect_aspect = rect.width() / rect.height();
-                        let img_aspect = img_size.x / img_size.y;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(ctx.style().visuals.panel_fill))
+            .show(ctx, |ui| {
+                self.swipe_view.show(
+                    ui,
+                    |painter, rect, page_idx| {
+                        if page_idx >= bg_for_page.len() {
+                            return;
+                        }
+                        if let (Some(tex_id), Some(img_size)) =
+                            (bg_for_page[page_idx], bg_sizes[page_idx])
+                        {
+                            // "Cover" scaling: fill the rect while preserving aspect ratio
+                            let rect_aspect = rect.width() / rect.height();
+                            let img_aspect = img_size.x / img_size.y;
 
-                        let uv_rect = if img_aspect > rect_aspect {
-                            // Image is wider than rect — crop sides
-                            let visible_fraction = rect_aspect / img_aspect;
-                            let offset = (1.0 - visible_fraction) / 2.0;
-                            egui::Rect::from_min_max(
-                                egui::pos2(offset, 0.0),
-                                egui::pos2(1.0 - offset, 1.0),
-                            )
-                        } else {
-                            // Image is taller than rect — crop top/bottom
-                            let visible_fraction = img_aspect / rect_aspect;
-                            let offset = (1.0 - visible_fraction) / 2.0;
-                            egui::Rect::from_min_max(
-                                egui::pos2(0.0, offset),
-                                egui::pos2(1.0, 1.0 - offset),
-                            )
+                            let uv_rect = if img_aspect > rect_aspect {
+                                // Image is wider than rect — crop sides
+                                let visible_fraction = rect_aspect / img_aspect;
+                                let offset = (1.0 - visible_fraction) / 2.0;
+                                egui::Rect::from_min_max(
+                                    egui::pos2(offset, 0.0),
+                                    egui::pos2(1.0 - offset, 1.0),
+                                )
+                            } else {
+                                // Image is taller than rect — crop top/bottom
+                                let visible_fraction = img_aspect / rect_aspect;
+                                let offset = (1.0 - visible_fraction) / 2.0;
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, offset),
+                                    egui::pos2(1.0, 1.0 - offset),
+                                )
+                            };
+
+                            // Paint the background with reduced opacity so content remains readable
+                            let tint = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 50);
+                            painter.image(tex_id, rect, uv_rect, tint);
+                        }
+                    },
+                    |ui, page_idx| {
+                        ui.spacing_mut().window_margin = Margin {
+                            left: 4,
+                            right: 4,
+                            top: 4,
+                            bottom: 4,
                         };
-
-                        // Paint the background with reduced opacity so content remains readable
-                        let tint = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 50);
-                        painter.image(tex_id, rect, uv_rect, tint);
-                    }
-                },
-                |ui, page_idx| {
-                    if page_idx >= pages.len() {
-                        return;
-                    }
-                    match &pages[page_idx] {
-                        DynamicPage::Source(source_idx) => {
-                            let source = &config.sources[*source_idx];
-                            match source.source_type {
-                                ConfigSourceType::File => {
-                                    if let Some(data) = file_render_data.get(source_idx) {
-                                        paint_file_source(
+                        if page_idx >= pages.len() {
+                            return;
+                        }
+                        match &pages[page_idx] {
+                            DynamicPage::Source(source_idx) => {
+                                let source = &config.sources[*source_idx];
+                                match source.source_type {
+                                    ConfigSourceType::File => {
+                                        if let Some(data) = file_render_data.get(source_idx) {
+                                            paint_file_source(
+                                                ui,
+                                                source,
+                                                *source_idx,
+                                                data,
+                                                is_scanning,
+                                                &mut actions,
+                                            );
+                                        }
+                                    }
+                                    ConfigSourceType::Stream => {
+                                        paint_stream_source(
                                             ui,
                                             source,
-                                            *source_idx,
-                                            data,
-                                            is_scanning,
+                                            &station_textures,
                                             &mut actions,
                                         );
                                     }
-                                }
-                                ConfigSourceType::Stream => {
-                                    paint_stream_source(
-                                        ui,
-                                        source,
-                                        &station_textures,
-                                        &mut actions,
-                                    );
-                                }
-                                ConfigSourceType::KidsFile => {
-                                    if let Some(data) = kids_file_render_data.get(source_idx) {
-                                        paint_kids_file_source(
+                                    ConfigSourceType::KidsFile => {
+                                        if let Some(data) = kids_file_render_data.get(source_idx) {
+                                            paint_kids_file_source(
+                                                ui,
+                                                source,
+                                                *source_idx,
+                                                data,
+                                                &kids_cover_textures,
+                                                is_scanning,
+                                                &mut actions,
+                                            );
+                                        }
+                                    }
+                                    ConfigSourceType::CD => {
+                                        let cd_state = cd_render_data
+                                            .get(source_idx)
+                                            .cloned()
+                                            .unwrap_or_else(CdSourceState::new);
+                                        paint_cd_source(
                                             ui,
                                             source,
                                             *source_idx,
-                                            data,
-                                            &kids_cover_textures,
-                                            is_scanning,
+                                            &cd_state,
                                             &mut actions,
                                         );
                                     }
-                                }
-                                ConfigSourceType::CD => {
-                                    let cd_state = cd_render_data
-                                        .get(source_idx)
-                                        .cloned()
-                                        .unwrap_or_else(CdSourceState::new);
-                                    paint_cd_source(
-                                        ui,
-                                        source,
-                                        *source_idx,
-                                        &cd_state,
-                                        &mut actions,
-                                    );
                                 }
                             }
+                            DynamicPage::NowPlaying => {
+                                paint_now_playing(ui, &current_title, cover_texture.as_ref());
+                            }
+                            DynamicPage::Playlist => {
+                                paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
+                            }
+                            DynamicPage::Settings => {
+                                paint_settings(ui, settings_state, &mut actions);
+                            }
                         }
-                        DynamicPage::NowPlaying => {
-                            paint_now_playing(ui, &current_title, cover_texture.as_ref());
-                        }
-                        DynamicPage::Playlist => {
-                            paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
-                        }
-                        DynamicPage::Settings => {
-                            paint_settings(ui, settings_state, &mut actions);
-                        }
-                    }
-                },
-            );
-        });
+                    },
+                );
+            });
 
         // Process collected actions
         for action in actions {
             self.process_action(action);
         }
     }
+}
+
+fn replace_fonts(ctx: &egui::Context) {
+    // Start with the default fonts (we will be adding to them rather than replacing them).
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "custom_regular".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/arimo-regular.ttf"
+        ))),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "custom_regular".to_owned());
+
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
 }

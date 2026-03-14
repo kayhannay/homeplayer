@@ -23,14 +23,10 @@ pub fn paint_playlist(
             ui.label(
                 egui::RichText::new(egui_i18n::tr!("playlist_empty"))
                     .weak()
-                    .size(18.0),
+                    .size(24.0),
             );
             ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(egui_i18n::tr!("playlist_empty_hint"))
-                    .weak()
-                    .small(),
-            );
+            ui.label(egui::RichText::new(egui_i18n::tr!("playlist_empty_hint")).weak());
         });
         return;
     }
@@ -40,16 +36,13 @@ pub fn paint_playlist(
 
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(egui_i18n::tr!("playlist_n_tracks", {count: queue.len()}))
-                .weak()
-                .small(),
+            egui::RichText::new(egui_i18n::tr!("playlist_n_tracks", {count: queue.len()})).weak(),
         );
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let clear_btn = egui::Button::new(
-                egui::RichText::new(egui_i18n::tr!("playlist_clear_button")).small(),
-            )
-            .fill(egui::Color32::TRANSPARENT);
+            let clear_btn =
+                egui::Button::new(egui::RichText::new(egui_i18n::tr!("playlist_clear_button")))
+                    .fill(egui::Color32::TRANSPARENT);
 
             if ui
                 .add(clear_btn)

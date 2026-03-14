@@ -85,20 +85,12 @@ pub fn paint_kids_file_source(
                     .size(16.0),
             );
             ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(egui_i18n::tr!("try_scanning_hint"))
-                    .weak()
-                    .small(),
-            );
+            ui.label(egui::RichText::new(egui_i18n::tr!("try_scanning_hint")).weak());
         });
         return;
     }
 
-    ui.label(
-        egui::RichText::new(egui_i18n::tr!("n_albums", {count: data.albums.len()}))
-            .weak()
-            .small(),
-    );
+    ui.label(egui::RichText::new(egui_i18n::tr!("n_albums", {count: data.albums.len()})).weak());
     ui.add_space(4.0);
 
     // Album grid
@@ -223,11 +215,10 @@ fn paint_album_grid(
                     );
 
                     // Album name (bold, truncated)
-                    let album_galley = ui.painter().layout(
+                    let album_galley = ui.painter().layout_no_wrap(
                         album.album_name.clone(),
                         egui::FontId::proportional(13.0),
                         ui.visuals().strong_text_color(),
-                        text_rect.width(),
                     );
                     painter.galley(
                         text_rect.min,
@@ -237,11 +228,10 @@ fn paint_album_grid(
 
                     // Artist name (smaller, weak, below album name)
                     let artist_y = text_rect.min.y + album_galley.size().y.min(18.0) + 1.0;
-                    let artist_galley = ui.painter().layout(
+                    let artist_galley = ui.painter().layout_no_wrap(
                         album.artist_name.clone(),
                         egui::FontId::proportional(11.0),
                         ui.visuals().weak_text_color(),
-                        text_rect.width(),
                     );
                     painter.galley(
                         egui::pos2(text_rect.min.x, artist_y),
@@ -259,8 +249,7 @@ fn paint_album_grid(
                 let add_response = ui
                     .put(
                         btn_rect,
-                        egui::Button::new(egui::RichText::new("➕").size(14.0))
-                            .min_size(btn_size),
+                        egui::Button::new(egui::RichText::new("➕").size(14.0)).min_size(btn_size),
                     )
                     .on_hover_text(egui_i18n::tr!("add_to_playlist_hover"));
                 if add_response.clicked() {

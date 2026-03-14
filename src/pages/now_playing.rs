@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui::Color32;
 use rodio_player::TitleChanged;
 
 use crate::pages::semi_transparent_fill;

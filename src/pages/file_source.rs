@@ -348,9 +348,7 @@ fn paint_artist_list(
         });
     } else {
         ui.label(
-            egui::RichText::new(egui_i18n::tr!("n_artists", {count: data.artists.len()}))
-                .weak()
-                .small(),
+            egui::RichText::new(egui_i18n::tr!("n_artists", {count: data.artists.len()})).weak(),
         );
         ui.add_space(4.0);
 

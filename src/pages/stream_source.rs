@@ -33,9 +33,7 @@ pub fn paint_stream_source(
     }
 
     ui.label(
-        egui::RichText::new(egui_i18n::tr!("n_stations", {count: source.stations.len()}))
-            .weak()
-            .small(),
+        egui::RichText::new(egui_i18n::tr!("n_stations", {count: source.stations.len()})).weak(),
     );
     ui.add_space(4.0);
 

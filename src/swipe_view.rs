@@ -12,6 +12,8 @@
 // detection immune to coordinate jitter that can build up over many frames on
 // noisy touch panels.
 
+use egui::Id;
+
 /// Minimum horizontal displacement (logical pixels) before a gesture is
 /// visually treated as a page-swipe (the pages start following the finger).
 const SWIPE_VISUAL_THRESHOLD: f32 = 14.0;
@@ -224,14 +226,28 @@ impl SwipeView {
                 })
                 .show(&mut child_ui, |ui| {
                     ui.set_min_width(available_width - 16.0);
-                    add_page(ui, page_idx);
+                    // Wrap content in a frame with horizontal padding so buttons etc.
+                    // have breathing room, while the background image behind still
+                    // fills the panel edge-to-edge (the frame has no fill).
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 8,
+                            right: 8,
+                            top: 8,
+                            bottom: 8,
+                        })
+                        .show(ui, |ui| {
+                            add_page(ui, page_idx);
+                        });
                     // Add some bottom padding so content doesn't sit right at the edge
                     ui.add_space(20.0);
                 });
         }
 
         // Request repaint during animation / committed drag for smooth visuals
-        if self.gesture_committed || (page_offset - self.target_page as f32).abs() > 0.001 {
+        let needs_repaint =
+            self.gesture_committed || (page_offset - self.target_page as f32).abs() > 0.001;
+        if needs_repaint {
             ui.ctx().request_repaint();
         }
     }
