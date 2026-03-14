@@ -1366,25 +1366,89 @@ impl eframe::App for Homeplayer {
 
                 // Track info
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Volume controls on the right (laid out first so they claim space)
-                    ui.spacing_mut().slider_width = 150.0;
+                    // Volume controls on the right (laid out right-to-left, so PLUS is outermost)
+                    let max_vol = self.config.audio.max_volume as f32 / 100.0;
+                    let vol_step = max_vol / 20.0; // 5% steps relative to max
+
+                    // PLUS button
+                    if ui
+                        .add_sized(
+                            egui::vec2(40.0, 40.0),
+                            egui::Button::new(egui::RichText::new("+").size(22.0).strong()),
+                        )
+                        .clicked()
+                    {
+                        let new_vol = (self.volume + vol_step).min(max_vol);
+                        self.volume = new_vol;
+                        actions.push(UiAction::PlayerVolume(new_vol));
+                    }
+
+                    // Progress bar with percentage label
+                    let vol_fraction = if max_vol > 0.0 {
+                        self.volume / max_vol
+                    } else {
+                        0.0
+                    };
+                    let vol_pct = (vol_fraction * 100.0).round() as u32;
+                    let bar_width = 120.0;
+                    let bar_height = 20.0;
+                    let (bar_rect, _bar_resp) = ui.allocate_exact_size(
+                        egui::vec2(bar_width, bar_height),
+                        egui::Sense::hover(),
+                    );
+                    if ui.is_rect_visible(bar_rect) {
+                        let painter = ui.painter();
+                        let visuals = ui.visuals();
+                        // Background
+                        painter.rect_filled(
+                            bar_rect,
+                            egui::CornerRadius::same(4),
+                            visuals.extreme_bg_color,
+                        );
+                        // Filled portion
+                        let filled_width = bar_rect.width() * vol_fraction;
+                        let filled_rect = egui::Rect::from_min_size(
+                            bar_rect.min,
+                            egui::vec2(filled_width, bar_rect.height()),
+                        );
+                        painter.rect_filled(
+                            filled_rect,
+                            egui::CornerRadius::same(4),
+                            visuals.selection.bg_fill,
+                        );
+                        // Percentage text centred on bar
+                        painter.text(
+                            bar_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            format!("{}%", vol_pct),
+                            egui::FontId::proportional(13.0),
+                            visuals.strong_text_color(),
+                        );
+                    }
+
+                    // MINUS button
+                    if ui
+                        .add_sized(
+                            egui::vec2(40.0, 40.0),
+                            egui::Button::new(egui::RichText::new("-").size(22.0).strong()),
+                        )
+                        .clicked()
+                    {
+                        let new_vol = (self.volume - vol_step).max(0.0);
+                        self.volume = new_vol;
+                        actions.push(UiAction::PlayerVolume(new_vol));
+                    }
+
+                    // MUTE button
                     let mute_icon = if self.is_muted { "🔇" } else { "🔊" };
                     if ui
                         .add_sized(
-                            egui::vec2(36.0, 36.0),
+                            egui::vec2(40.0, 40.0),
                             egui::Button::new(egui::RichText::new(mute_icon).size(20.0)),
                         )
                         .clicked()
                     {
                         actions.push(UiAction::PlayerMute);
-                    }
-                    let max_vol = self.config.audio.max_volume as f32 / 100.0;
-                    let mut vol = self.volume;
-                    let response =
-                        ui.add(egui::Slider::new(&mut vol, 0.0..=max_vol).show_value(false));
-                    if response.changed() {
-                        self.volume = vol;
-                        actions.push(UiAction::PlayerVolume(vol));
                     }
 
                     // Title text in remaining space (left-to-right, truncated)
