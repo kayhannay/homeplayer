@@ -95,7 +95,7 @@ pub fn paint_playlist(
             fill
         };
 
-        egui::Frame::new()
+        let frame_response = egui::Frame::new()
             .fill(row_fill)
             .corner_radius(egui::CornerRadius::same(4))
             .inner_margin(egui::Margin::symmetric(8, 4))
@@ -141,6 +141,21 @@ pub fn paint_playlist(
                     });
                 });
             });
+
+        // Clicking anywhere on the row (but not the remove button) starts
+        // playback from this entry.
+        let row_rect = frame_response.response.rect;
+        let row_resp = ui.interact(
+            row_rect,
+            ui.id().with(("playlist_row", i)),
+            egui::Sense::click(),
+        );
+        if row_resp.clicked() {
+            actions.push(UiAction::PlaylistPlayFrom { index: i });
+        }
+        if row_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
 
         ui.add_space(2.0);
     }

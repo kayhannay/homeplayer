@@ -470,6 +470,9 @@ pub(crate) enum UiAction {
         index: usize,
     },
     PlaylistClear,
+    PlaylistPlayFrom {
+        index: usize,
+    },
     SaveConfig {
         config: Config,
     },
@@ -836,6 +839,25 @@ impl Homeplayer {
             UiAction::PlaylistClear => {
                 self.player.clear();
             }
+            UiAction::PlaylistPlayFrom { index } => {
+                if self.is_playing || self.is_paused {
+                    // Playback thread is already running – just reposition it.
+                    if let Err(e) = self.player.play_from(index) {
+                        error!("Failed to jump to playlist index {index}: {e}");
+                    }
+                } else {
+                    // Nothing playing yet: set the start index then kick off
+                    // the playback thread.
+                    if let Err(e) = self.player.play_from(index) {
+                        error!("Failed to set playlist start index {index}: {e}");
+                    }
+                    if let Err(e) = self.player.play() {
+                        error!("Failed to start playlist playback: {e}");
+                    } else {
+                        self.navigate_to_now_playing();
+                    }
+                }
+            }
         }
     }
 
@@ -899,8 +921,24 @@ impl Homeplayer {
             self.player.pause(); // toggles pause→play
         } else if !self.is_playing {
             // Nothing playing – start playback depending on the
-            // current page type (file source or CD source).
+            // current page type (file source, CD source, or playlist).
             let current_page = self.swipe_view.current_page();
+
+            // Playlist page: start from the beginning of the queue.
+            if let Some(DynamicPage::Playlist) = self.pages.get(current_page) {
+                if !self.playlist_queue.is_empty() {
+                    if let Err(e) = self.player.play_from(0) {
+                        error!("Failed to set playlist start: {e}");
+                    }
+                    if let Err(e) = self.player.play() {
+                        error!("Failed to start playlist playback: {e}");
+                    } else {
+                        self.navigate_to_now_playing();
+                    }
+                }
+                return;
+            }
+
             if let Some(DynamicPage::Source(source_idx)) = self.pages.get(current_page) {
                 let source_idx = *source_idx;
                 let source_type = &self.config.sources[source_idx].source_type;

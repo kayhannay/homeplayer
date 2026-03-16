@@ -371,6 +371,28 @@ impl RodioPlayer {
         self.current_sink().stop();
     }
 
+    /// Jump to a specific index in the queue and start (or restart) playback
+    /// from that position.  If playback is already running the current track
+    /// is stopped; the background playback thread will then pick up at
+    /// `target_index`.  If nothing is playing yet `play()` must be called
+    /// afterwards – this method only updates the index pointer.
+    pub fn play_from(&self, target_index: usize) -> Result<(), Error> {
+        // Clamp to valid range
+        let queue_len = self.sound_queue.lock().unwrap().len();
+        let target_index = target_index.min(queue_len.saturating_sub(1));
+
+        // Update the index *before* stopping so the playback thread picks up
+        // the right item when it restarts.
+        *self.sound_queue_index.lock().unwrap() = target_index;
+
+        // Stop the sink – if a playback thread is already running it will
+        // wake up, see the new index, and play from there.  If no thread is
+        // running yet, play() must be called separately.
+        self.current_sink().stop();
+
+        Ok(())
+    }
+
     /// Returns a snapshot of the current sound queue together with the index
     /// of the item that is currently playing (or about to play next).
     ///
