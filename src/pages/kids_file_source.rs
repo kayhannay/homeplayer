@@ -125,7 +125,17 @@ fn paint_album_grid(
     // No inner ScrollArea here — the SwipeView already wraps every page in a
     // vertical ScrollArea that has the drag-jump fix applied.  Adding another
     // nested ScrollArea would shadow the outer one and re-introduce the bug.
-    let albums = &data.albums;
+    let mut albums: Vec<&KidsAlbumItem> = data.albums.iter().collect();
+    albums.sort_by(|a, b| {
+        a.artist_name
+            .to_lowercase()
+            .cmp(&b.artist_name.to_lowercase())
+            .then_with(|| {
+                a.album_name
+                    .to_lowercase()
+                    .cmp(&b.album_name.to_lowercase())
+            })
+    });
     let num_rows = albums.len().div_ceil(columns);
 
     for row in 0..num_rows {
