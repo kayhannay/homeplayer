@@ -28,3 +28,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 rodio-player = { path = "rodio-player" }
 egui-i18n = { version = "0.1", features = ["classic"] }
+
+[profile.minsize]
+inherits = "release"
+strip = true
+lto = "fat"
+opt-level = "s"
+panic = "abort"
