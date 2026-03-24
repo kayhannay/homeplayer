@@ -95,68 +95,74 @@ pub fn paint_playlist(
             fill
         };
 
-        let frame_response = egui::Frame::new()
-            .fill(row_fill)
-            .corner_radius(egui::CornerRadius::same(4))
-            .inner_margin(egui::Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
+        // Split the row into a main (play) area and a remove-button area,
+        // exactly as file_source does, so the two hit-rects never overlap.
+        let row_height = 48.0;
+        let remove_btn_width = 48.0;
+        let gap = ui.spacing().item_spacing.x;
+        let total_width = ui.available_width();
+        let main_width = (total_width - remove_btn_width - gap).max(0.0);
 
-                ui.horizontal(|ui| {
-                    // Track number badge
-                    let num_text = format!("{:>3}.", i + 1);
-                    ui.label(egui::RichText::new(num_text).weak().monospace().size(13.0));
+        let (row_rect, _) =
+            ui.allocate_exact_size(egui::vec2(total_width, row_height), egui::Sense::hover());
 
-                    ui.label(egui::RichText::new(track_icon).size(14.0));
-
-                    // Title + metadata (takes all remaining space)
-                    ui.vertical(|ui| {
-                        let title_style = if is_playing {
-                            egui::RichText::new(&title_part).strong().size(15.0)
-                        } else if is_past {
-                            egui::RichText::new(&title_part).weak().size(15.0)
-                        } else {
-                            egui::RichText::new(&title_part).size(15.0)
-                        };
-                        ui.label(title_style);
-
-                        if !meta_part.is_empty() {
-                            ui.label(egui::RichText::new(&meta_part).weak().italics().size(12.0));
-                        }
-                    });
-
-                    // Remove button pinned to the right
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let remove_btn = egui::Button::new(egui::RichText::new("🗑").size(14.0))
-                            .fill(egui::Color32::TRANSPARENT)
-                            .min_size(egui::vec2(36.0, 36.0));
-
-                        if ui
-                            .add(remove_btn)
-                            .on_hover_text(egui_i18n::tr!("playlist_remove_hover"))
-                            .clicked()
-                        {
-                            actions.push(UiAction::PlaylistRemove { index: i });
-                        }
-                    });
-                });
-            });
-
-        // Clicking anywhere on the row (but not the remove button) starts
-        // playback from this entry.
-        let row_rect = frame_response.response.rect;
-        let row_resp = ui.interact(
-            row_rect,
-            ui.id().with(("playlist_row", i)),
-            egui::Sense::click(),
+        let main_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(main_width, row_height));
+        let remove_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                row_rect.max.x - remove_btn_width,
+                row_rect.min.y + (row_height - remove_btn_width) / 2.0,
+            ),
+            egui::vec2(remove_btn_width, remove_btn_width),
         );
-        if row_resp.clicked() {
+
+        // Build the label for the main button, same style as file_source rows.
+        let num_text = format!("{:>3}.", i + 1);
+        let label_text = if meta_part.is_empty() {
+            format!("{}  {}  {}", num_text, track_icon, title_part)
+        } else {
+            format!(
+                "{}  {}  {} — {}",
+                num_text, track_icon, title_part, meta_part
+            )
+        };
+        let label = if is_playing {
+            egui::RichText::new(label_text).strong().size(15.0)
+        } else if is_past {
+            egui::RichText::new(label_text).weak().size(15.0)
+        } else {
+            egui::RichText::new(label_text).size(15.0)
+        };
+
+        // Main area: plain Button exactly like row_with_add_button in file_source.
+        let main_clicked = ui
+            .new_child(
+                egui::UiBuilder::new()
+                    .max_rect(main_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            )
+            .add(
+                egui::Button::new(label)
+                    .fill(row_fill)
+                    .frame(true)
+                    .min_size(main_rect.size()),
+            )
+            .clicked();
+
+        if main_clicked {
             actions.push(UiAction::PlaylistPlayFrom { index: i });
         }
-        if row_resp.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
 
-        ui.add_space(2.0);
+        // Remove button in its own non-overlapping rect.
+        let remove_clicked = ui
+            .put(
+                remove_rect,
+                egui::Button::new(egui::RichText::new("🗑").size(14.0)),
+            )
+            .on_hover_text(egui_i18n::tr!("playlist_remove_hover"))
+            .clicked();
+
+        if remove_clicked {
+            actions.push(UiAction::PlaylistRemove { index: i });
+        }
     }
 }
