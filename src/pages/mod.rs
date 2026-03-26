@@ -1,3 +1,4 @@
+pub mod bluetooth_settings;
 pub mod cd_source;
 pub mod file_source;
 pub mod kids_file_source;

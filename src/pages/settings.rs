@@ -2,7 +2,9 @@ use eframe::egui;
 use rodio_player::list_output_devices;
 
 use crate::UiAction;
+use crate::bluetooth::BluetoothManager;
 use crate::config::{Config, ConfigSourceType, Source, Station};
+use crate::pages::bluetooth_settings::{BluetoothSettingsState, paint_bluetooth_settings};
 use crate::pages::{semi_transparent_group_frame, source_type_icon};
 
 /// Mutable state for the settings page editor.
@@ -31,6 +33,8 @@ pub struct SettingsState {
     pub confirm_remove_station: Option<(usize, usize)>,
     /// Cached list of available audio output device names.
     pub available_devices: Vec<String>,
+    /// State for the Bluetooth pairing section.
+    pub bluetooth: BluetoothSettingsState,
 }
 
 impl SettingsState {
@@ -51,6 +55,7 @@ impl SettingsState {
             confirm_remove_source: None,
             confirm_remove_station: None,
             available_devices: list_output_devices(),
+            bluetooth: BluetoothSettingsState::default(),
         }
     }
 
@@ -71,6 +76,8 @@ impl SettingsState {
         self.confirm_remove_source = None;
         self.confirm_remove_station = None;
         self.available_devices = list_output_devices();
+        // Bluetooth state is intentionally preserved across resets so that
+        // the device list and scan status survive a config reload.
     }
 }
 
@@ -90,8 +97,18 @@ const ALL_SOURCE_TYPES: [ConfigSourceType; 4] = [
     ConfigSourceType::KidsFile,
 ];
 
-pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mut Vec<UiAction>) {
+pub fn paint_settings(
+    ui: &mut egui::Ui,
+    state: &mut SettingsState,
+    actions: &mut Vec<UiAction>,
+    bt_manager: &Option<BluetoothManager>,
+) {
     ui.add_space(8.0);
+
+    // Apply any pending Bluetooth events so the device list is always fresh.
+    if let Some(mgr) = bt_manager {
+        state.bluetooth.apply_events(mgr);
+    }
 
     // ── Appearance ──────────────────────────────────────────────────────
     semi_transparent_group_frame(ui).show(ui, |ui| {
@@ -196,6 +213,11 @@ pub fn paint_settings(ui: &mut egui::Ui, state: &mut SettingsState, actions: &mu
                 });
         });
     });
+
+    ui.add_space(8.0);
+
+    // ── Bluetooth ───────────────────────────────────────────────────────
+    paint_bluetooth_settings(ui, &mut state.bluetooth, bt_manager);
 
     ui.add_space(8.0);
 

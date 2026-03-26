@@ -22,7 +22,9 @@ tracing-subscriber = "0.3"
 lofty = "0.23"
 rusqlite = { version = "0.38", features = ["bundled"] }
 
-tokio = { version = "1.49", features = ["rt-multi-thread"] }
+tokio = { version = "1.49", features = ["rt-multi-thread", "sync", "time"] }
+bluer = { version = "0.17", features = ["bluetoothd"] }
+futures = "0.3"
 
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 

@@ -1,3 +1,4 @@
+mod bluetooth;
 mod config;
 mod music_store;
 mod pages;
@@ -17,6 +18,7 @@ use rodio_player::{PlayerState, RodioPlayer, SoundItem, TitleChanged};
 use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
+use crate::bluetooth::BluetoothManager;
 use crate::config::{AudioConfig, Config, ConfigSourceType, UiConfig};
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
@@ -188,6 +190,15 @@ fn main() -> eframe::Result<()> {
                 .expect("Failed to spawn button-state bridge thread");
 
             let settings_state = SettingsState::new(&config);
+
+            // Try to initialise the Bluetooth manager.  Failure here is
+            // non-fatal (e.g. no adapter, BlueZ not running) – the settings
+            // page will just show an "unavailable" message in that case.
+            let bluetooth_manager = {
+                let mgr = BluetoothManager::new(&tokio_rt);
+                Some(mgr)
+            };
+
             Ok(Box::new(Homeplayer {
                 swipe_view: SwipeView::new(num_pages),
                 config,
@@ -221,6 +232,7 @@ fn main() -> eframe::Result<()> {
                 kids_cover_textures: HashMap::new(),
                 station_textures: HashMap::new(),
                 settings_state,
+                bluetooth_manager,
             }))
         }),
     )
@@ -516,6 +528,7 @@ struct Homeplayer {
     kids_cover_textures: HashMap<String, TextureHandle>,
     station_textures: HashMap<String, TextureHandle>,
     settings_state: SettingsState,
+    bluetooth_manager: Option<BluetoothManager>,
 }
 
 impl Homeplayer {
@@ -1664,6 +1677,7 @@ impl eframe::App for Homeplayer {
             .collect();
 
         let settings_state = &mut self.settings_state;
+        let bluetooth_manager = &self.bluetooth_manager;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(ctx.style().visuals.panel_fill))
@@ -1773,7 +1787,7 @@ impl eframe::App for Homeplayer {
                                 paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
                             }
                             DynamicPage::Settings => {
-                                paint_settings(ui, settings_state, &mut actions);
+                                paint_settings(ui, settings_state, &mut actions, bluetooth_manager);
                             }
                         }
                     },
