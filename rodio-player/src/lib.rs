@@ -16,7 +16,7 @@ use anyhow::Error;
 use icy_metadata::{IcyHeaders, IcyMetadataReader, RequestIcyMetadata};
 use rodio::cpal;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::{OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::num::NonZeroUsize;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -74,8 +74,8 @@ pub struct SoundItem {
 /// continue to reference the (stopped) old sink until they exit naturally.
 #[derive(Clone)]
 pub struct RodioPlayer {
-    sink: Arc<Mutex<Arc<Sink>>>,
-    _stream: Arc<Mutex<Arc<OutputStream>>>,
+    sink: Arc<Mutex<Arc<Player>>>,
+    _stream: Arc<Mutex<Arc<MixerDeviceSink>>>,
     sound_queue: Arc<Mutex<Vec<SoundItem>>>,
     sound_queue_index: Arc<Mutex<usize>>,
     mute_volume: Arc<Mutex<f32>>,
@@ -113,7 +113,7 @@ impl RodioPlayer {
         device_name: Option<&str>,
     ) -> Self {
         let stream = open_output_stream(device_name);
-        let sink = rodio::Sink::connect_new(stream.mixer());
+        let sink = Player::connect_new(stream.mixer());
 
         Self {
             sink: Arc::new(Mutex::new(Arc::new(sink))),
@@ -150,7 +150,7 @@ impl RodioPlayer {
 
         // Create a new output stream and sink for the requested device.
         let stream = open_output_stream(device_name);
-        let new_sink = Arc::new(rodio::Sink::connect_new(stream.mixer()));
+        let new_sink = Arc::new(Player::connect_new(stream.mixer()));
         new_sink.set_volume(volume);
 
         // Swap the sink and stream.  Old values are dropped when the last
@@ -166,7 +166,7 @@ impl RodioPlayer {
 
     /// Clone the current inner `Arc<Sink>`.  Spawned threads should use this
     /// to obtain a handle that remains valid even if the device is switched.
-    fn current_sink(&self) -> Arc<Sink> {
+    fn current_sink(&self) -> Arc<Player> {
         self.sink.lock().unwrap().clone()
     }
 
@@ -463,7 +463,7 @@ impl RodioPlayer {
 }
 
 fn start_cd_playback(
-    player_sink: Arc<Sink>,
+    player_sink: Arc<Player>,
     queue_index: Arc<Mutex<usize>>,
     device: &str,
     tracks: Vec<cd_audio::CdTrackInfo>,
@@ -524,11 +524,11 @@ fn start_cd_playback(
     Ok(())
 }
 
-/// Open an [`OutputStream`] for the device identified by `device_name`.
+/// Open a [`MixerDeviceSink`] for the device identified by `device_name`.
 ///
 /// When the name is `None`, empty, or `"Default"` the system default device
 /// is used.  If a specific device cannot be found, falls back to the default.
-fn open_output_stream(device_name: Option<&str>) -> OutputStream {
+fn open_output_stream(device_name: Option<&str>) -> MixerDeviceSink {
     let use_default = match device_name {
         None => true,
         Some(name) => name.is_empty() || name == "Default",
@@ -540,7 +540,7 @@ fn open_output_stream(device_name: Option<&str>) -> OutputStream {
             for device in devices {
                 if let Ok(name) = device.name() {
                     if name == requested {
-                        match OutputStreamBuilder::from_device(device).and_then(|b| b.open_stream())
+                        match DeviceSinkBuilder::from_device(device).and_then(|b| b.open_stream())
                         {
                             Ok(stream) => {
                                 info!("Opened audio output device: {requested}");
@@ -561,11 +561,11 @@ fn open_output_stream(device_name: Option<&str>) -> OutputStream {
         warn!("Audio device '{requested}' not found, falling back to default");
     }
 
-    OutputStreamBuilder::open_default_stream().expect("Failed to open default audio output stream")
+    DeviceSinkBuilder::open_default_sink().expect("Failed to open default audio output stream")
 }
 
 fn start_playback_queue(
-    player_sink: Arc<Sink>,
+    player_sink: Arc<Player>,
     player_queue: Arc<Mutex<Vec<SoundItem>>>,
     queue_index: Arc<Mutex<usize>>,
     title_changed_sender: Sender<TitleChanged>,

@@ -517,12 +517,12 @@ impl rodio::Source for CdTrackSource {
         }
     }
 
-    fn channels(&self) -> u16 {
-        CD_CHANNELS
+    fn channels(&self) -> std::num::NonZero<u16> {
+        std::num::NonZero::new(CD_CHANNELS).unwrap()
     }
 
-    fn sample_rate(&self) -> u32 {
-        CD_SAMPLE_RATE
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
+        std::num::NonZero::new(CD_SAMPLE_RATE).unwrap()
     }
 
     fn total_duration(&self) -> Option<Duration> {

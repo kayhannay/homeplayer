@@ -1296,7 +1296,7 @@ impl Homeplayer {
 }
 
 impl eframe::App for Homeplayer {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Load background images on first frame
         self.backgrounds.load_if_needed(ctx);
 
@@ -1370,12 +1370,14 @@ impl eframe::App for Homeplayer {
         if self.is_playing || self.scanning.load(Ordering::SeqCst) {
             ctx.request_repaint();
         }
+    }
 
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Collect actions during rendering
         let mut actions: Vec<UiAction> = Vec::new();
 
         // --- Top panel: media player controls ---
-        egui::TopBottomPanel::top("media_player_bar").show(ctx, |ui| {
+        egui::Panel::top("media_player_bar").show_inside(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -1534,9 +1536,9 @@ impl eframe::App for Homeplayer {
         });
 
         // --- Bottom panel: tab buttons ---
-        egui::TopBottomPanel::bottom("tab_bar")
+        egui::Panel::bottom("tab_bar")
             .frame(Frame::NONE)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
@@ -1680,8 +1682,8 @@ impl eframe::App for Homeplayer {
         let bluetooth_manager = &self.bluetooth_manager;
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(ctx.style().visuals.panel_fill))
-            .show(ctx, |ui| {
+            .frame(egui::Frame::new().fill(ui.style().visuals.panel_fill))
+            .show_inside(ui, |ui| {
                 self.swipe_view.show(
                     ui,
                     |painter, rect, page_idx| {
