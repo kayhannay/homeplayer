@@ -12,7 +12,7 @@
 // detection immune to coordinate jitter that can build up over many frames on
 // noisy touch panels.
 
-use egui::Id;
+use egui::{Id, scroll_area::DragScroll};
 
 /// Minimum horizontal displacement (logical pixels) before a gesture is
 /// visually treated as a page-swipe (the pages start following the finger).
@@ -221,7 +221,7 @@ impl SwipeView {
                 // finger movement, so normal drag scrolling (and kinetic scrolling)
                 // resume without any visible glitch.
                 .scroll_source(egui::scroll_area::ScrollSource {
-                    drag: !pointer_pressed,
+                    drag: if pointer_pressed { DragScroll::Never } else { DragScroll::Always },
                     ..egui::scroll_area::ScrollSource::ALL
                 })
                 .show(&mut child_ui, |ui| {

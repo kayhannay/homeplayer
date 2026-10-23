@@ -877,20 +877,40 @@ impl Homeplayer {
     fn eject_cd(&mut self, source_idx: usize) {
         let source = &self.config.sources[source_idx];
         let device = source.path.clone();
-        self.player.stop();
-        match rodio_player::cd_audio::eject_cd(&device) {
-            Ok(_) => {
-                info!("CD ejected");
-                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
-                    state.tracks.clear();
-                    state.disc_present = false;
-                    state.status = "Disc ejected. Insert a CD and press Refresh.".to_string();
+
+        if rodio_player::cd_audio::is_tray_open(&device) {
+            // Tray is open – close it
+            match rodio_player::cd_audio::close_cd_tray(&device) {
+                Ok(_) => {
+                    info!("CD tray closed");
+                    if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                        state.status = "Tray closed.".to_string();
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to close CD tray: {e}");
+                    if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                        state.status = format!("Close tray failed: {e}");
+                    }
                 }
             }
-            Err(e) => {
-                error!("Failed to eject CD: {e}");
-                if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
-                    state.status = format!("Eject failed: {e}");
+        } else {
+            // Tray is closed – eject
+            match rodio_player::cd_audio::eject_cd(&device) {
+                Ok(_) => {
+                    info!("CD ejected");
+                    if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                        state.tracks.clear();
+                        state.disc_present = false;
+                        state.status =
+                            "Disc ejected. Insert a CD and press Refresh.".to_string();
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to eject CD: {e}");
+                    if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
+                        state.status = format!("Eject failed: {e}");
+                    }
                 }
             }
         }

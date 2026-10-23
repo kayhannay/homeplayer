@@ -38,6 +38,7 @@ const CDROMEJECT: libc::c_ulong = 0x5309;
 const CDROM_LOCKDOOR: libc::c_ulong = 0x5329;
 /// Check drive status.
 const CDROM_DRIVE_STATUS: libc::c_ulong = 0x5326;
+const CDROMCLOSETRAY: libc::c_ulong = 0x5319;
 
 /// Address format: Logical Block Address.
 const CDROM_LBA: u8 = 0x01;
@@ -65,6 +66,8 @@ const CD_SAMPLE_RATE: u32 = 44_100;
 /// CD audio channel count (stereo).
 const CD_CHANNELS: u16 = 2;
 
+/// Drive status: tray is open.
+const CDS_TRAY_OPEN: libc::c_int = 1;
 /// Drive status: disc is present and the tray is closed.
 const CDS_DISC_OK: libc::c_int = 4;
 
@@ -332,6 +335,33 @@ pub fn eject_cd(device: &str) -> Result<(), Error> {
         ));
     }
     debug!("CD tray ejected");
+    Ok(())
+}
+
+/// Check whether the CD tray is currently open.
+pub fn is_tray_open(device: &str) -> bool {
+    let file = match open_cd_device(device) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let fd = file.as_raw_fd();
+    let status = unsafe { libc::ioctl(fd, CDROM_DRIVE_STATUS, 0 as libc::c_int) };
+    status == CDS_TRAY_OPEN
+}
+
+/// Close the CD tray using the `CDROMCLOSETRAY` ioctl.
+pub fn close_cd_tray(device: &str) -> Result<(), Error> {
+    let file = open_cd_device(device)?;
+    let fd = file.as_raw_fd();
+
+    let ret = unsafe { libc::ioctl(fd, CDROMCLOSETRAY) };
+    if ret < 0 {
+        return Err(anyhow!(
+            "CDROMCLOSETRAY ioctl failed: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    debug!("CD tray closed");
     Ok(())
 }
 

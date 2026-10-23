@@ -2,3 +2,8 @@ target
 *.db3
 config.toml
 config.json
+icons/
+images_kay/
+kidsmusic/
+music/
+stations/

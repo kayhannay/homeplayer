@@ -14,8 +14,8 @@ pub mod cd_audio;
 
 use anyhow::Error;
 use icy_metadata::{IcyHeaders, IcyMetadataReader, RequestIcyMetadata};
-use rodio::cpal;
-use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::{DeviceTrait, cpal};
+use rodio::cpal::traits::{HostTrait};
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use std::num::NonZeroUsize;
 use std::sync::mpsc::Sender;
@@ -92,8 +92,8 @@ pub fn list_output_devices() -> Vec<String> {
     let mut names = vec!["Default".to_string()];
     if let Ok(devices) = cpal::default_host().output_devices() {
         for device in devices {
-            if let Ok(name) = device.name() {
-                names.push(name);
+            if let Ok(description) = device.description() {
+                names.push(description.name().into());
             }
         }
     }
@@ -538,8 +538,8 @@ fn open_output_stream(device_name: Option<&str>) -> MixerDeviceSink {
         let requested = device_name.unwrap();
         if let Ok(devices) = cpal::default_host().output_devices() {
             for device in devices {
-                if let Ok(name) = device.name() {
-                    if name == requested {
+                if let Ok(description) = device.description() {
+                    if description.name() == requested {
                         match DeviceSinkBuilder::from_device(device).and_then(|b| b.open_stream())
                         {
                             Ok(stream) => {
