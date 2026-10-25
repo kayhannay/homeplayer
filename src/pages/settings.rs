@@ -6,7 +6,9 @@ use rodio_player::list_output_devices;
 use crate::UiAction;
 use crate::bluetooth::BluetoothManager;
 use crate::config::{Config, ConfigSourceType, KeyboardLayout, Source, Station};
-use crate::pages::bluetooth_settings::{BluetoothSettingsState, paint_bluetooth_settings};
+use crate::pages::bluetooth_settings::{
+    BluetoothSettingsState, PhoneAudioInfo, paint_bluetooth_settings,
+};
 use crate::pages::wifi_settings::{WifiSettingsState, paint_wifi_settings};
 use crate::wifi::WifiManager;
 use crate::pages::{semi_transparent_group_frame, source_type_icon};
@@ -114,6 +116,7 @@ pub fn paint_settings(
     actions: &mut Vec<UiAction>,
     bt_manager: &Option<BluetoothManager>,
     wifi_manager: &Option<WifiManager>,
+    phone_audio: &PhoneAudioInfo,
 ) {
     ui.add_space(8.0);
 
@@ -253,7 +256,7 @@ pub fn paint_settings(
     // ── Bluetooth ───────────────────────────────────────────────────────
     paint_wifi_settings(ui, &mut state.wifi, wifi_manager);
     ui.add_space(8.0);
-    paint_bluetooth_settings(ui, &mut state.bluetooth, bt_manager);
+    paint_bluetooth_settings(ui, &mut state.bluetooth, bt_manager, phone_audio, actions);
 
     ui.add_space(8.0);
 

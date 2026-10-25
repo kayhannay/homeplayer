@@ -34,6 +34,7 @@ gpiocdev = "0.8.0"
 egui_keyboard = { path = "../egui_keyboard/egui_keyboard", default-features = false }
 nmrs = "3.5.7"
 if-addrs = "0.15.0"
+zbus = "5"
 
 [profile.minsize]
 inherits = "release"

@@ -1,4 +1,5 @@
 mod bluetooth;
+mod bt_audio;
 mod wifi;
 mod config;
 mod music_store;
@@ -8,6 +9,7 @@ mod swipe_view;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{
     Arc,
@@ -21,6 +23,8 @@ use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
 use crate::bluetooth::BluetoothManager;
+use crate::bt_audio::{BtAudioCommand, BtAudioEvent, BtAudioManager, Phone, PhoneControl, PlayerStatus};
+use crate::pages::bluetooth_settings::PhoneAudioInfo;
 use crate::wifi::WifiManager;
 use crate::config::{
     AudioConfig, Config, ConfigSourceType, PowerButtonAction, PowerConfig, UiConfig,
@@ -28,7 +32,8 @@ use crate::config::{
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
     CdSourceState, FileRenderData, KidsFileRenderData, SettingsState, paint_cd_source,
-    paint_file_source, paint_kids_file_source, paint_now_playing, paint_playlist, paint_settings,
+    paint_file_source, paint_kids_file_source, paint_now_playing, paint_phone_audio, paint_playlist,
+    paint_settings,
     paint_stream_source, source_type_icon,
 };
 use crate::swipe_view::SwipeView;
@@ -99,15 +104,7 @@ fn main() -> eframe::Result<()> {
     player.set_volume(initial_volume);
 
     // Build dynamic pages
-    let mut pages: Vec<DynamicPage> = Vec::new();
-    pages.push(DynamicPage::NowPlaying);
-    pages.push(DynamicPage::Playlist);
-    for (i, _source) in config.sources.iter().enumerate() {
-        pages.push(DynamicPage::Source(i));
-    }
-    if !config.ui.hide_settings {
-        pages.push(DynamicPage::Settings);
-    }
+    let pages = build_pages(&config, false);
 
     let num_pages = pages.len();
 
@@ -209,6 +206,7 @@ fn main() -> eframe::Result<()> {
             };
 
             let wifi_manager = Some(WifiManager::new(&tokio_rt));
+            let bt_audio = Some(BtAudioManager::new(&tokio_rt, cc.egui_ctx.clone()));
 
             Ok(Box::new(Homeplayer {
                 swipe_view: SwipeView::new(num_pages),
@@ -245,6 +243,11 @@ fn main() -> eframe::Result<()> {
                 settings_state,
                 bluetooth_manager,
                 wifi_manager,
+                bt_audio,
+                bt_audio_unavailable: false,
+                phone: None,
+                pairing_remaining: None,
+                local_was_playing: false,
                 power_rx,
                 show_power_dialog: false,
                 keyboard: egui_keyboard::Keyboard::default(),
@@ -330,12 +333,28 @@ impl BackgroundImages {
 // Dynamic page definitions
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum DynamicPage {
     Source(usize),
     NowPlaying,
     Playlist,
+    /// A phone is connected as Bluetooth audio source.
+    PhoneAudio,
     Settings,
+}
+
+fn build_pages(config: &Config, phone_connected: bool) -> Vec<DynamicPage> {
+    let mut pages = vec![DynamicPage::NowPlaying, DynamicPage::Playlist];
+    for i in 0..config.sources.len() {
+        pages.push(DynamicPage::Source(i));
+    }
+    if phone_connected {
+        pages.push(DynamicPage::PhoneAudio);
+    }
+    if !config.ui.hide_settings {
+        pages.push(DynamicPage::Settings);
+    }
+    pages
 }
 
 fn page_label(page: &DynamicPage, config: &Config) -> String {
@@ -347,6 +366,7 @@ fn page_label(page: &DynamicPage, config: &Config) -> String {
         }
         DynamicPage::NowPlaying => egui_i18n::tr!("page_playing"),
         DynamicPage::Playlist => egui_i18n::tr!("page_playlist"),
+        DynamicPage::PhoneAudio => egui_i18n::tr!("page_phone"),
         DynamicPage::Settings => egui_i18n::tr!("page_settings"),
     }
 }
@@ -493,6 +513,9 @@ pub(crate) enum UiAction {
     PlayerPrevious,
     PlayerVolume(f32),
     PlayerMute,
+    PhoneControl(PhoneControl),
+    BtAudioPairing(bool),
+    BtAudioDisconnect,
     PlaylistRemove {
         index: usize,
     },
@@ -545,6 +568,13 @@ struct Homeplayer {
     settings_state: SettingsState,
     bluetooth_manager: Option<BluetoothManager>,
     wifi_manager: Option<WifiManager>,
+    bt_audio: Option<BtAudioManager>,
+    bt_audio_unavailable: bool,
+    /// Phone currently connected as Bluetooth audio source.
+    phone: Option<Phone>,
+    /// Remaining time of the Bluetooth pairing mode, if active.
+    pairing_remaining: Option<Duration>,
+    local_was_playing: bool,
     power_rx: Receiver<()>,
     show_power_dialog: bool,
     keyboard: egui_keyboard::Keyboard,
@@ -559,6 +589,106 @@ impl Homeplayer {
             .position(|p| matches!(p, DynamicPage::NowPlaying))
         {
             self.swipe_view.set_page(idx);
+        }
+    }
+
+    /// Whether the top bar controls act on the connected phone instead of the
+    /// local player: while the phone page is shown or the phone is playing.
+    fn phone_controls_active(&self) -> bool {
+        let Some(phone) = &self.phone else {
+            return false;
+        };
+        phone.controllable
+            && (phone.status == PlayerStatus::Playing
+                || matches!(
+                    self.pages.get(self.swipe_view.current_page()),
+                    Some(DynamicPage::PhoneAudio)
+                ))
+    }
+
+    /// The phone is the current audio source: it is playing, or it is paused
+    /// while nothing plays locally.
+    fn phone_is_source(&self) -> bool {
+        self.phone.as_ref().is_some_and(|p| match p.status {
+            PlayerStatus::Playing => true,
+            PlayerStatus::Paused => !self.is_playing && !self.is_paused,
+            PlayerStatus::Stopped => false,
+        })
+    }
+
+    /// Title information of whatever is currently the audio source.
+    fn source_title(&self) -> TitleChanged {
+        match &self.phone {
+            Some(p) if self.phone_is_source() => TitleChanged {
+                artist: p.track.artist.clone(),
+                album: p.track.album.clone(),
+                title: if p.track.title.is_empty() {
+                    p.name.clone()
+                } else {
+                    p.track.title.clone()
+                },
+                cover: String::new(),
+            },
+            _ => self.current_title.clone(),
+        }
+    }
+
+    fn send_phone_control(&mut self, control: PhoneControl) {
+        // Never play both at once: starting the phone stops local playback.
+        if control == PhoneControl::Play && (self.is_playing || self.is_paused) {
+            self.player.stop();
+        }
+        if let Some(mgr) = &self.bt_audio {
+            mgr.send(BtAudioCommand::Control(control));
+        }
+    }
+
+    fn drain_bt_audio(&mut self) {
+        let Some(mgr) = &self.bt_audio else { return };
+        let events = mgr.drain_events();
+        for event in events {
+            match event {
+                BtAudioEvent::Unavailable(msg) => {
+                    warn!("Bluetooth audio unavailable: {msg}");
+                    self.bt_audio_unavailable = true;
+                }
+                BtAudioEvent::Pairing(remaining) => self.pairing_remaining = remaining,
+                BtAudioEvent::Error(msg) => warn!("Bluetooth audio: {msg}"),
+                BtAudioEvent::Phone(phone) => self.set_phone(phone),
+            }
+        }
+    }
+
+    fn set_phone(&mut self, phone: Option<Phone>) {
+        let was_playing = self
+            .phone
+            .as_ref()
+            .is_some_and(|p| p.status == PlayerStatus::Playing);
+        let now_playing = phone
+            .as_ref()
+            .is_some_and(|p| p.status == PlayerStatus::Playing);
+        let presence_changed = self.phone.is_some() != phone.is_some();
+        self.phone = phone;
+
+        // The phone started streaming: silence our own playback.
+        if now_playing && !was_playing {
+            if self.is_playing && !self.is_paused {
+                self.player.pause();
+            }
+            self.navigate_to_now_playing();
+        }
+
+        if presence_changed {
+            // Keep the same page selected when the phone tab appears or
+            // disappears.
+            let current = self.pages.get(self.swipe_view.current_page()).cloned();
+            self.pages = build_pages(&self.config, self.phone.is_some());
+            self.swipe_view.set_num_pages(self.pages.len());
+            if let Some(current) = current
+                && let Some(idx) = self.pages.iter().position(|p| *p == current)
+            {
+                self.swipe_view.set_page(idx);
+            }
         }
     }
 
@@ -669,15 +799,7 @@ impl Homeplayer {
         egui_i18n::set_language(&self.config.ui.language);
 
         // ── 2. Rebuild pages ───────────────────────────────────────────
-        let mut pages: Vec<DynamicPage> = Vec::new();
-        pages.push(DynamicPage::NowPlaying);
-        pages.push(DynamicPage::Playlist);
-        for (i, _source) in self.config.sources.iter().enumerate() {
-            pages.push(DynamicPage::Source(i));
-        }
-        if !self.config.ui.hide_settings {
-            pages.push(DynamicPage::Settings);
-        }
+        let pages = build_pages(&self.config, self.phone.is_some());
         self.pages = pages;
         self.swipe_view.set_num_pages(self.pages.len());
 
@@ -782,6 +904,38 @@ impl Homeplayer {
             }
             UiAction::SwitchBrowseMode { source_idx, mode } => {
                 self.switch_browse_mode(source_idx, mode);
+            }
+            UiAction::PlayerPlay if self.phone_controls_active() => {
+                self.send_phone_control(PhoneControl::Play);
+            }
+            UiAction::PlayerPause if self.phone_controls_active() => {
+                self.send_phone_control(PhoneControl::Pause);
+            }
+            UiAction::PlayerStop if self.phone_controls_active() => {
+                self.send_phone_control(PhoneControl::Stop);
+            }
+            UiAction::PlayerNext if self.phone_controls_active() => {
+                self.send_phone_control(PhoneControl::Next);
+            }
+            UiAction::PlayerPrevious if self.phone_controls_active() => {
+                self.send_phone_control(PhoneControl::Previous);
+            }
+            UiAction::PhoneControl(control) => {
+                self.send_phone_control(control);
+            }
+            UiAction::BtAudioPairing(start) => {
+                if let Some(mgr) = &self.bt_audio {
+                    mgr.send(if start {
+                        BtAudioCommand::StartPairing
+                    } else {
+                        BtAudioCommand::StopPairing
+                    });
+                }
+            }
+            UiAction::BtAudioDisconnect => {
+                if let Some(mgr) = &self.bt_audio {
+                    mgr.send(BtAudioCommand::Disconnect);
+                }
             }
             UiAction::PlayerPlay => {
                 self.play();
@@ -1337,6 +1491,20 @@ impl eframe::App for Homeplayer {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.keyboard.pump_events(ctx);
 
+        self.drain_bt_audio();
+        // Local playback started while the phone is streaming: pause the phone.
+        let local_playing = self.is_playing && !self.is_paused;
+        if local_playing
+            && !self.local_was_playing
+            && self
+                .phone
+                .as_ref()
+                .is_some_and(|p| p.controllable && p.status == PlayerStatus::Playing)
+        {
+            self.send_phone_control(PhoneControl::Pause);
+        }
+        self.local_was_playing = local_playing;
+
         // Load background images on first frame
         self.backgrounds.load_if_needed(ctx);
 
@@ -1440,16 +1608,19 @@ impl eframe::App for Homeplayer {
                 }
 
                 // Play / Pause
-                let play_pause_label = if self.is_playing && !self.is_paused {
-                    "⏸"
+                let showing_playing = if self.phone_controls_active() {
+                    self.phone
+                        .as_ref()
+                        .is_some_and(|p| p.status == PlayerStatus::Playing)
                 } else {
-                    "▶"
+                    self.is_playing && !self.is_paused
                 };
+                let play_pause_label = if showing_playing { "⏸" } else { "▶" };
                 if ui
                     .add_sized(button_size, egui::Button::new(play_pause_label))
                     .clicked()
                 {
-                    if self.is_playing && !self.is_paused {
+                    if showing_playing {
                         actions.push(UiAction::PlayerPause);
                     } else {
                         actions.push(UiAction::PlayerPlay);
@@ -1557,21 +1728,27 @@ impl eframe::App for Homeplayer {
 
                     // Title text in remaining space (left-to-right, truncated)
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let status = if self.is_playing && !self.is_paused {
+                        let from_phone = self.phone_is_source();
+                        let (playing, paused) = match (&self.phone, from_phone) {
+                            (Some(p), true) => (
+                                p.status == PlayerStatus::Playing,
+                                p.status == PlayerStatus::Paused,
+                            ),
+                            _ => (self.is_playing && !self.is_paused, self.is_paused),
+                        };
+                        let status = if playing {
                             "▶"
-                        } else if self.is_paused {
+                        } else if paused {
                             "⏸"
                         } else {
                             "⏹"
                         };
 
-                        let title_text = if self.current_title.artist.is_empty() {
-                            self.current_title.title.clone()
+                        let source_title = self.source_title();
+                        let title_text = if source_title.artist.is_empty() {
+                            source_title.title.clone()
                         } else {
-                            format!(
-                                "{} - {}",
-                                self.current_title.artist, self.current_title.title
-                            )
+                            format!("{} - {}", source_title.artist, source_title.title)
                         };
 
                         ui.add(
@@ -1633,11 +1810,15 @@ impl eframe::App for Homeplayer {
         // Pre-clone/copy data needed for rendering
         let pages = self.pages.clone();
         let config = self.config.clone();
-        let current_title = self.current_title.clone();
+        let current_title = self.source_title();
         let is_scanning = self.scanning.load(Ordering::SeqCst);
 
         // Pre-extract cover texture reference to avoid borrow conflict with swipe_view
-        let cover_texture = self.cover_texture.clone();
+        let cover_texture = if self.phone_is_source() {
+            None
+        } else {
+            self.cover_texture.clone()
+        };
 
         // Snapshot playlist data for rendering (already updated by drain_channels)
         let playlist_queue = self.playlist_queue.clone();
@@ -1699,7 +1880,7 @@ impl eframe::App for Homeplayer {
                         ConfigSourceType::CD => self.backgrounds.cd.as_ref().map(|t| t.id()),
                     }
                 }
-                DynamicPage::NowPlaying | DynamicPage::Playlist => {
+                DynamicPage::NowPlaying | DynamicPage::Playlist | DynamicPage::PhoneAudio => {
                     self.backgrounds.playing.as_ref().map(|t| t.id())
                 }
                 DynamicPage::Settings => self.backgrounds.settings.as_ref().map(|t| t.id()),
@@ -1722,7 +1903,7 @@ impl eframe::App for Homeplayer {
                         ConfigSourceType::CD => self.backgrounds.cd.as_ref().map(|t| t.size_vec2()),
                     }
                 }
-                DynamicPage::NowPlaying | DynamicPage::Playlist => {
+                DynamicPage::NowPlaying | DynamicPage::Playlist | DynamicPage::PhoneAudio => {
                     self.backgrounds.playing.as_ref().map(|t| t.size_vec2())
                 }
                 DynamicPage::Settings => self.backgrounds.settings.as_ref().map(|t| t.size_vec2()),
@@ -1732,6 +1913,12 @@ impl eframe::App for Homeplayer {
         let settings_state = &mut self.settings_state;
         let bluetooth_manager = &self.bluetooth_manager;
         let wifi_manager = &self.wifi_manager;
+        let phone = self.phone.clone();
+        let phone_audio_info = PhoneAudioInfo {
+            available: self.bt_audio.is_some() && !self.bt_audio_unavailable,
+            pairing: self.pairing_remaining,
+            phone: self.phone.as_ref().map(|p| p.name.clone()),
+        };
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(ui.style().visuals.panel_fill))
@@ -1840,6 +2027,11 @@ impl eframe::App for Homeplayer {
                             DynamicPage::Playlist => {
                                 paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
                             }
+                            DynamicPage::PhoneAudio => {
+                                if let Some(phone) = &phone {
+                                    paint_phone_audio(ui, phone, &mut actions);
+                                }
+                            }
                             DynamicPage::Settings => {
                                 paint_settings(
                                     ui,
@@ -1847,6 +2039,7 @@ impl eframe::App for Homeplayer {
                                     &mut actions,
                                     bluetooth_manager,
                                     wifi_manager,
+                                    &phone_audio_info,
                                 );
                             }
                         }

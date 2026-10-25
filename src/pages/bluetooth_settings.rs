@@ -13,6 +13,9 @@ use crate::bluetooth::{
     BluetoothCommand, BluetoothDevice, BluetoothEvent, BluetoothManager, DeviceStatus,
     sorted_devices,
 };
+use std::time::Duration;
+
+use crate::UiAction;
 use crate::pages::semi_transparent_group_frame;
 
 // ---------------------------------------------------------------------------
@@ -76,6 +79,15 @@ impl BluetoothSettingsState {
     }
 }
 
+/// State of the "phone as audio source" feature, shown in the Bluetooth card.
+pub struct PhoneAudioInfo {
+    pub available: bool,
+    /// Remaining time of the pairing mode, `None` when inactive.
+    pub pairing: Option<Duration>,
+    /// Name of the connected phone.
+    pub phone: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Paint function
 // ---------------------------------------------------------------------------
@@ -88,6 +100,8 @@ pub fn paint_bluetooth_settings(
     ui: &mut egui::Ui,
     state: &mut BluetoothSettingsState,
     manager: &Option<BluetoothManager>,
+    phone_audio: &PhoneAudioInfo,
+    actions: &mut Vec<UiAction>,
 ) {
     semi_transparent_group_frame(ui).show(ui, |ui| {
         // ── Header row ──────────────────────────────────────────────────
@@ -229,6 +243,58 @@ pub fn paint_bluetooth_settings(
                     state.confirm_remove = None;
                 }
             }
+        }
+
+        // ── Phone audio (this device as Bluetooth speaker) ──────────────
+        if phone_audio.available {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(egui_i18n::tr!("bt_phone_audio"))
+                    .strong()
+                    .size(14.0),
+            );
+            ui.add_space(2.0);
+            if let Some(name) = &phone_audio.phone {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {name}",
+                            egui_i18n::tr!("bt_phone_connected")
+                        ))
+                        .color(egui::Color32::from_rgb(100, 220, 100))
+                        .small(),
+                    );
+                    if ui.small_button(egui_i18n::tr!("bt_disconnect")).clicked() {
+                        actions.push(UiAction::BtAudioDisconnect);
+                    }
+                });
+            }
+            ui.horizontal(|ui| match phone_audio.pairing {
+                Some(remaining) => {
+                    ui.spinner();
+                    let secs = remaining.as_secs();
+                    ui.label(format!(
+                        "{} {}:{:02}",
+                        egui_i18n::tr!("bt_pairing_active"),
+                        secs / 60,
+                        secs % 60
+                    ));
+                    if ui.small_button(egui_i18n::tr!("power_cancel")).clicked() {
+                        actions.push(UiAction::BtAudioPairing(false));
+                    }
+                }
+                None => {
+                    if ui
+                        .small_button(egui_i18n::tr!("bt_pairing_start"))
+                        .on_hover_text(egui_i18n::tr!("bt_pairing_hover"))
+                        .clicked()
+                    {
+                        actions.push(UiAction::BtAudioPairing(true));
+                    }
+                }
+            });
         }
 
         // ── Transient message ────────────────────────────────────────────
