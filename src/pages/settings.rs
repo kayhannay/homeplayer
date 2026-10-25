@@ -3,7 +3,7 @@ use rodio_player::list_output_devices;
 
 use crate::UiAction;
 use crate::bluetooth::BluetoothManager;
-use crate::config::{Config, ConfigSourceType, Source, Station};
+use crate::config::{Config, ConfigSourceType, KeyboardLayout, Source, Station};
 use crate::pages::bluetooth_settings::{BluetoothSettingsState, paint_bluetooth_settings};
 use crate::pages::{semi_transparent_group_frame, source_type_icon};
 
@@ -142,6 +142,28 @@ pub fn paint_settings(
                         {
                             state.config.ui.language = code.to_string();
                             egui_i18n::set_language(code);
+                            state.dirty = true;
+                            state.save_message = None;
+                        }
+                    }
+                });
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui_i18n::tr!("settings_keyboard_layout"));
+            egui::ComboBox::from_id_salt("ui_keyboard_layout")
+                .selected_text(state.config.ui.keyboard_layout.label())
+                .show_ui(ui, |ui| {
+                    for layout in KeyboardLayout::ALL {
+                        if ui
+                            .selectable_label(
+                                state.config.ui.keyboard_layout == layout,
+                                layout.label(),
+                            )
+                            .clicked()
+                            && state.config.ui.keyboard_layout != layout
+                        {
+                            state.config.ui.keyboard_layout = layout;
                             state.dirty = true;
                             state.save_message = None;
                         }

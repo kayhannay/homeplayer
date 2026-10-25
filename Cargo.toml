@@ -1,6 +1,6 @@
 [package]
 name = "homeplayer"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2024"
 publish = false
 
@@ -30,6 +30,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 rodio-player = { path = "rodio-player" }
 egui-i18n = { version = "0.2", features = ["classic"] }
+gpiocdev = "0.8.0"
+egui_keyboard = { path = "../egui_keyboard/egui_keyboard", default-features = false }
 
 [profile.minsize]
 inherits = "release"

@@ -2,6 +2,7 @@ mod bluetooth;
 mod config;
 mod music_store;
 mod pages;
+mod power;
 mod swipe_view;
 
 use std::collections::HashMap;
@@ -19,7 +20,9 @@ use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
 use crate::bluetooth::BluetoothManager;
-use crate::config::{AudioConfig, Config, ConfigSourceType, UiConfig};
+use crate::config::{
+    AudioConfig, Config, ConfigSourceType, PowerButtonAction, PowerConfig, UiConfig,
+};
 use crate::music_store::{KidsAlbumItem, MusicItem, MusicStore, MusicTitleItem};
 use crate::pages::{
     CdSourceState, FileRenderData, KidsFileRenderData, SettingsState, paint_cd_source,
@@ -56,6 +59,7 @@ fn main() -> eframe::Result<()> {
                     device: None,
                 },
                 ui: UiConfig::default(),
+                power: PowerConfig::default(),
             }
         }
     };
@@ -191,6 +195,9 @@ fn main() -> eframe::Result<()> {
 
             let settings_state = SettingsState::new(&config);
 
+            let (power_tx, power_rx) = mpsc::channel();
+            power::spawn_button_listener(&config.power, power_tx, cc.egui_ctx.clone());
+
             // Try to initialise the Bluetooth manager.  Failure here is
             // non-fatal (e.g. no adapter, BlueZ not running) – the settings
             // page will just show an "unavailable" message in that case.
@@ -233,6 +240,9 @@ fn main() -> eframe::Result<()> {
                 station_textures: HashMap::new(),
                 settings_state,
                 bluetooth_manager,
+                power_rx,
+                show_power_dialog: false,
+                keyboard: egui_keyboard::Keyboard::default(),
             }))
         }),
     )
@@ -529,6 +539,9 @@ struct Homeplayer {
     station_textures: HashMap<String, TextureHandle>,
     settings_state: SettingsState,
     bluetooth_manager: Option<BluetoothManager>,
+    power_rx: Receiver<()>,
+    show_power_dialog: bool,
+    keyboard: egui_keyboard::Keyboard,
 }
 
 impl Homeplayer {
@@ -902,8 +915,7 @@ impl Homeplayer {
                     if let Some(state) = self.cd_source_states.get_mut(&source_idx) {
                         state.tracks.clear();
                         state.disc_present = false;
-                        state.status =
-                            "Disc ejected. Insert a CD and press Refresh.".to_string();
+                        state.status = "Disc ejected. Insert a CD and press Refresh.".to_string();
                     }
                 }
                 Err(e) => {
@@ -1317,11 +1329,24 @@ impl Homeplayer {
 
 impl eframe::App for Homeplayer {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.keyboard.pump_events(ctx);
+
         // Load background images on first frame
         self.backgrounds.load_if_needed(ctx);
 
         // Drain player channels for state updates
         self.drain_channels();
+
+        // Hardware power button
+        while self.power_rx.try_recv().is_ok() {
+            match self.config.power.button_action {
+                PowerButtonAction::None => {}
+                PowerButtonAction::Shutdown => {
+                    power::run(&self.config.power.shutdown_command);
+                }
+                PowerButtonAction::Dialog => self.show_power_dialog = true,
+            }
+        }
 
         // Update cover texture if the cover path changed
         if self.current_title.cover != self.cover_texture_path {
@@ -1816,10 +1841,51 @@ impl eframe::App for Homeplayer {
                 );
             });
 
+        if self.show_power_dialog {
+            let mut close = false;
+            let modal = egui::Modal::new(egui::Id::new("power_dialog")).show(ui.ctx(), |ui| {
+                ui.set_width(320.0);
+                ui.heading(egui_i18n::tr!("power_title"));
+                ui.add_space(8.0);
+                ui.label(egui_i18n::tr!("power_question"));
+                ui.add_space(12.0);
+                let size = egui::vec2(96.0, 48.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_sized(size, egui::Button::new(egui_i18n::tr!("power_shutdown")))
+                        .clicked()
+                    {
+                        power::run(&self.config.power.shutdown_command);
+                        close = true;
+                    }
+                    if ui
+                        .add_sized(size, egui::Button::new(egui_i18n::tr!("power_restart")))
+                        .clicked()
+                    {
+                        power::run(&self.config.power.restart_command);
+                        close = true;
+                    }
+                    if ui
+                        .add_sized(size, egui::Button::new(egui_i18n::tr!("power_cancel")))
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                });
+            });
+            if close || modal.should_close() {
+                self.show_power_dialog = false;
+            }
+        }
+
         // Process collected actions
         for action in actions {
             self.process_action(action);
         }
+
+        self.keyboard
+            .set_layout(self.settings_state.config.ui.keyboard_layout.to_keyboard());
+        self.keyboard.show(ui.ctx());
     }
 }
 

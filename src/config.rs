@@ -12,6 +12,69 @@ pub struct Config {
     pub audio: AudioConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub power: PowerConfig,
+}
+
+/// What happens when the hardware power button is pressed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub enum PowerButtonAction {
+    /// Ignore the button.
+    #[default]
+    None,
+    /// Shut the system down immediately.
+    Shutdown,
+    /// Show a dialog that lets the user choose between shutdown and restart.
+    Dialog,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PowerConfig {
+    #[serde(default)]
+    pub button_action: PowerButtonAction,
+    /// GPIO character device, e.g. `/dev/gpiochip0` (`/dev/gpiochip4` on a Pi 5).
+    #[serde(default = "default_gpio_chip")]
+    pub gpio_chip: String,
+    /// GPIO line (BCM number) the button is connected to. No button when `None`.
+    #[serde(default)]
+    pub gpio_pin: Option<u32>,
+    /// `true` if the button pulls the line to ground when pressed (internal
+    /// pull-up is enabled), `false` if it drives the line high.
+    #[serde(default = "default_true")]
+    pub active_low: bool,
+    #[serde(default = "default_shutdown_command")]
+    pub shutdown_command: Vec<String>,
+    #[serde(default = "default_restart_command")]
+    pub restart_command: Vec<String>,
+}
+
+fn default_gpio_chip() -> String {
+    "/dev/gpiochip0".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_shutdown_command() -> Vec<String> {
+    vec!["systemctl".into(), "poweroff".into()]
+}
+
+fn default_restart_command() -> Vec<String> {
+    vec!["systemctl".into(), "reboot".into()]
+}
+
+impl Default for PowerConfig {
+    fn default() -> Self {
+        Self {
+            button_action: PowerButtonAction::None,
+            gpio_chip: default_gpio_chip(),
+            gpio_pin: None,
+            active_low: true,
+            shutdown_command: default_shutdown_command(),
+            restart_command: default_restart_command(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -64,6 +127,38 @@ pub struct UiConfig {
     pub hide_settings: bool,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
+    pub keyboard_layout: KeyboardLayout,
+}
+
+/// Layout of the on-screen keyboard.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub enum KeyboardLayout {
+    #[default]
+    Qwertz,
+    Qwerty,
+    Colemak,
+}
+
+impl KeyboardLayout {
+    pub const ALL: [KeyboardLayout; 3] = [Self::Qwertz, Self::Qwerty, Self::Colemak];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Qwertz => "QWERTZ",
+            Self::Qwerty => "QWERTY",
+            Self::Colemak => "Colemak",
+        }
+    }
+
+    pub fn to_keyboard(self) -> egui_keyboard::layouts::KeyboardLayout {
+        use egui_keyboard::layouts::KeyboardLayout as K;
+        match self {
+            Self::Qwertz => K::Qwertz,
+            Self::Qwerty => K::Qwerty,
+            Self::Colemak => K::Colemak,
+        }
+    }
 }
 
 fn default_language() -> String {
@@ -75,6 +170,7 @@ impl Default for UiConfig {
         Self {
             hide_settings: false,
             language: default_language(),
+            keyboard_layout: KeyboardLayout::default(),
         }
     }
 }
