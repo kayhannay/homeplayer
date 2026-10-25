@@ -5,6 +5,8 @@ use crate::UiAction;
 use crate::bluetooth::BluetoothManager;
 use crate::config::{Config, ConfigSourceType, KeyboardLayout, Source, Station};
 use crate::pages::bluetooth_settings::{BluetoothSettingsState, paint_bluetooth_settings};
+use crate::pages::wifi_settings::{WifiSettingsState, paint_wifi_settings};
+use crate::wifi::WifiManager;
 use crate::pages::{semi_transparent_group_frame, source_type_icon};
 
 /// Mutable state for the settings page editor.
@@ -35,6 +37,7 @@ pub struct SettingsState {
     pub available_devices: Vec<String>,
     /// State for the Bluetooth pairing section.
     pub bluetooth: BluetoothSettingsState,
+    pub wifi: WifiSettingsState,
 }
 
 impl SettingsState {
@@ -56,6 +59,7 @@ impl SettingsState {
             confirm_remove_station: None,
             available_devices: list_output_devices(),
             bluetooth: BluetoothSettingsState::default(),
+            wifi: WifiSettingsState::default(),
         }
     }
 
@@ -102,6 +106,7 @@ pub fn paint_settings(
     state: &mut SettingsState,
     actions: &mut Vec<UiAction>,
     bt_manager: &Option<BluetoothManager>,
+    wifi_manager: &Option<WifiManager>,
 ) {
     ui.add_space(8.0);
 
@@ -239,6 +244,8 @@ pub fn paint_settings(
     ui.add_space(8.0);
 
     // ── Bluetooth ───────────────────────────────────────────────────────
+    paint_wifi_settings(ui, &mut state.wifi, wifi_manager);
+    ui.add_space(8.0);
     paint_bluetooth_settings(ui, &mut state.bluetooth, bt_manager);
 
     ui.add_space(8.0);

@@ -32,6 +32,7 @@ rodio-player = { path = "rodio-player" }
 egui-i18n = { version = "0.2", features = ["classic"] }
 gpiocdev = "0.8.0"
 egui_keyboard = { path = "../egui_keyboard/egui_keyboard", default-features = false }
+nmrs = "3.5.7"
 
 [profile.minsize]
 inherits = "release"

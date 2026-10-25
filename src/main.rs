@@ -1,4 +1,5 @@
 mod bluetooth;
+mod wifi;
 mod config;
 mod music_store;
 mod pages;
@@ -20,6 +21,7 @@ use rusqlite::Connection;
 use tracing::{debug, error, info, warn};
 
 use crate::bluetooth::BluetoothManager;
+use crate::wifi::WifiManager;
 use crate::config::{
     AudioConfig, Config, ConfigSourceType, PowerButtonAction, PowerConfig, UiConfig,
 };
@@ -206,6 +208,8 @@ fn main() -> eframe::Result<()> {
                 Some(mgr)
             };
 
+            let wifi_manager = Some(WifiManager::new(&tokio_rt));
+
             Ok(Box::new(Homeplayer {
                 swipe_view: SwipeView::new(num_pages),
                 config,
@@ -240,6 +244,7 @@ fn main() -> eframe::Result<()> {
                 station_textures: HashMap::new(),
                 settings_state,
                 bluetooth_manager,
+                wifi_manager,
                 power_rx,
                 show_power_dialog: false,
                 keyboard: egui_keyboard::Keyboard::default(),
@@ -539,6 +544,7 @@ struct Homeplayer {
     station_textures: HashMap<String, TextureHandle>,
     settings_state: SettingsState,
     bluetooth_manager: Option<BluetoothManager>,
+    wifi_manager: Option<WifiManager>,
     power_rx: Receiver<()>,
     show_power_dialog: bool,
     keyboard: egui_keyboard::Keyboard,
@@ -1725,6 +1731,7 @@ impl eframe::App for Homeplayer {
 
         let settings_state = &mut self.settings_state;
         let bluetooth_manager = &self.bluetooth_manager;
+        let wifi_manager = &self.wifi_manager;
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(ui.style().visuals.panel_fill))
@@ -1834,7 +1841,13 @@ impl eframe::App for Homeplayer {
                                 paint_playlist(ui, &playlist_queue, playlist_index, &mut actions);
                             }
                             DynamicPage::Settings => {
-                                paint_settings(ui, settings_state, &mut actions, bluetooth_manager);
+                                paint_settings(
+                                    ui,
+                                    settings_state,
+                                    &mut actions,
+                                    bluetooth_manager,
+                                    wifi_manager,
+                                );
                             }
                         }
                     },

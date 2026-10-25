@@ -6,6 +6,7 @@ pub mod now_playing;
 pub mod playlist;
 pub mod settings;
 pub mod stream_source;
+pub mod wifi_settings;
 
 use crate::config::ConfigSourceType;
 use eframe::egui;
