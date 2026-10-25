@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use eframe::egui;
 use rodio_player::list_output_devices;
 
@@ -38,6 +40,9 @@ pub struct SettingsState {
     /// State for the Bluetooth pairing section.
     pub bluetooth: BluetoothSettingsState,
     pub wifi: WifiSettingsState,
+    /// Cached network addresses shown in the Info section: (interface, address).
+    ip_addresses: Vec<(String, String)>,
+    ip_checked: Option<Instant>,
 }
 
 impl SettingsState {
@@ -60,6 +65,8 @@ impl SettingsState {
             available_devices: list_output_devices(),
             bluetooth: BluetoothSettingsState::default(),
             wifi: WifiSettingsState::default(),
+            ip_addresses: Vec::new(),
+            ip_checked: None,
         }
     }
 
@@ -559,19 +566,58 @@ pub fn paint_settings(
 
     ui.add_space(8.0);
 
-    // ── About ───────────────────────────────────────────────────────────
+    // ── Info ────────────────────────────────────────────────────────────
+    const IP_REFRESH: Duration = Duration::from_secs(5);
+    if state.ip_checked.is_none_or(|t| t.elapsed() >= IP_REFRESH) {
+        state.ip_addresses = local_ip_addresses();
+        state.ip_checked = Some(Instant::now());
+    }
+    ui.ctx().request_repaint_after(IP_REFRESH);
+
     semi_transparent_group_frame(ui).show(ui, |ui| {
         ui.label(
-            egui::RichText::new(egui_i18n::tr!("settings_about"))
+            egui::RichText::new(egui_i18n::tr!("settings_info"))
                 .strong()
                 .size(15.0),
         );
         ui.add_space(4.0);
-        ui.label("Homeplayer v0.1.0");
-        ui.label(egui::RichText::new(egui_i18n::tr!("about_built_with")).weak());
+        ui.label(format!(
+            "{} {}",
+            egui_i18n::tr!("info_version"),
+            env!("CARGO_PKG_VERSION")
+        ));
+        ui.add_space(4.0);
+        ui.label(egui_i18n::tr!("info_ip_addresses"));
+        if state.ip_addresses.is_empty() {
+            ui.label(egui::RichText::new(egui_i18n::tr!("info_no_network")).weak());
+        } else {
+            for (iface, addr) in &state.ip_addresses {
+                ui.label(egui::RichText::new(format!("  {iface}: {addr}")).monospace());
+            }
+        }
     });
 
     ui.add_space(40.0);
+}
+
+/// Non-loopback, non-link-local addresses of all network interfaces.
+fn local_ip_addresses() -> Vec<(String, String)> {
+    let mut addrs: Vec<(String, std::net::IpAddr)> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| !i.is_loopback())
+        .map(|i| (i.name.clone(), i.ip()))
+        .filter(|(_, ip)| match ip {
+            std::net::IpAddr::V4(v4) => !v4.is_link_local(),
+            std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) != 0xfe80,
+        })
+        .collect();
+    // IPv4 first, then by interface name.
+    addrs.sort_by(|a, b| (a.1.is_ipv6(), &a.0).cmp(&(b.1.is_ipv6(), &b.0)));
+    addrs
+        .into_iter()
+        .map(|(name, ip)| (name, ip.to_string()))
+        .collect()
 }
 
 /// Paint the station list editor for a given source.
